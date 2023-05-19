@@ -55,7 +55,7 @@ module pyth::setup {
         sources: vector<DataSource>,
         ctx: &mut TxContext
     ) {
-        wormhole::package_utils::assert_package_upgrade_cap<DeployerCap>(
+        pyth_wormhole::package_utils::assert_package_upgrade_cap<DeployerCap>(
             &upgrade_cap,
             package::compatible_policy(),
             1

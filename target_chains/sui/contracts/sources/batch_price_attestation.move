@@ -8,8 +8,8 @@ module pyth::batch_price_attestation {
     use pyth::price_status;
     use pyth::deserialize::{Self};
 
-    use wormhole::cursor::{Self, Cursor};
-    use wormhole::bytes::{Self};
+    use pyth_wormhole::cursor::{Self, Cursor};
+    use pyth_wormhole::bytes::{Self};
 
     #[test_only]
     use pyth::price;

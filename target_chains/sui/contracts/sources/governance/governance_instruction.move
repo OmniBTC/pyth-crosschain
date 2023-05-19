@@ -1,5 +1,5 @@
 module pyth::governance_instruction {
-    use wormhole::cursor;
+    use pyth_wormhole::cursor;
     use pyth::deserialize;
     use pyth::governance_action::{Self, GovernanceAction};
 
@@ -20,7 +20,7 @@ module pyth::governance_instruction {
     fun validate(instruction: &GovernanceInstruction) {
         assert!(instruction.module_ == MODULE, E_INVALID_GOVERNANCE_MODULE);
         let target_chain_id = instruction.target_chain_id;
-        assert!(target_chain_id == (wormhole::state::chain_id() as u64) || target_chain_id == 0, E_TARGET_CHAIN_MISMATCH);
+        assert!(target_chain_id == (pyth_wormhole::state::chain_id() as u64) || target_chain_id == 0, E_TARGET_CHAIN_MISMATCH);
     }
 
     public fun from_byte_vec(bytes: vector<u8>): GovernanceInstruction {

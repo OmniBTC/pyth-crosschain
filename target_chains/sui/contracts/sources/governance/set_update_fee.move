@@ -1,8 +1,8 @@
 module pyth::set_update_fee {
     use sui::math::{Self};
 
-    use wormhole::cursor;
-    use wormhole::governance_message::{Self, DecreeTicket};
+    use pyth_wormhole::cursor;
+    use pyth_wormhole::governance_message::{Self, DecreeTicket};
 
     use pyth::deserialize;
     use pyth::state::{Self, State, LatestOnly};

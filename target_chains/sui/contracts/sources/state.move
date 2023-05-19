@@ -9,10 +9,10 @@ module pyth::state {
     use pyth::price_identifier::{Self, PriceIdentifier};
     use pyth::version_control::{Self};
 
-    use wormhole::consumed_vaas::{Self, ConsumedVAAs};
-    use wormhole::bytes32::{Self, Bytes32};
-    use wormhole::package_utils::{Self};
-    use wormhole::external_address::{ExternalAddress};
+    use pyth_wormhole::consumed_vaas::{Self, ConsumedVAAs};
+    use pyth_wormhole::bytes32::{Self, Bytes32};
+    use pyth_wormhole::package_utils::{Self};
+    use pyth_wormhole::external_address::{ExternalAddress};
 
     friend pyth::pyth;
     #[test_only]

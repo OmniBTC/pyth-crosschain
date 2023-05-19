@@ -1,12 +1,12 @@
  module pyth::deserialize {
-    use wormhole::bytes::{Self};
-    use wormhole::cursor::{Cursor};
+    use pyth_wormhole::bytes::{Self};
+    use pyth_wormhole::cursor::{Cursor};
     use pyth::i64::{Self, I64};
     #[test_only]
-    use wormhole::cursor::{take_rest};
+    use pyth_wormhole::cursor::{take_rest};
 
     #[test_only]
-    use wormhole::cursor::{Self};
+    use pyth_wormhole::cursor::{Self};
 
     public fun deserialize_vector(cur: &mut Cursor<u8>, n: u64): vector<u8> {
         bytes::take_bytes(cur, n)

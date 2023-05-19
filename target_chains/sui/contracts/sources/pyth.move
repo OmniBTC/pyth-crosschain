@@ -18,9 +18,9 @@ module pyth::pyth {
     use pyth::setup::{Self, DeployerCap};
     use pyth::hot_potato_vector::{Self, HotPotatoVector};
 
-    use wormhole::external_address::{Self};
-    use wormhole::vaa::{Self, VAA};
-    use wormhole::bytes32::{Self};
+    use pyth_wormhole::external_address::{Self};
+    use pyth_wormhole::vaa::{Self, VAA};
+    use pyth_wormhole::bytes32::{Self};
 
     const E_DATA_SOURCE_EMITTER_ADDRESS_AND_CHAIN_IDS_DIFFERENT_LENGTHS: u64 = 0;
     const E_INVALID_DATA_SOURCE: u64 = 1;
@@ -357,11 +357,11 @@ module pyth::pyth_tests{
     use pyth::pyth::{Self, create_price_infos_hot_potato, update_single_price_feed};
     use pyth::hot_potato_vector::{Self};
 
-    use wormhole::setup::{Self as wormhole_setup, DeployerCap};
-    use wormhole::external_address::{Self};
-    use wormhole::bytes32::{Self};
-    use wormhole::state::{State as WormState};
-    use wormhole::vaa::{Self, VAA};
+    use pyth_wormhole::setup::{Self as wormhole_setup, DeployerCap};
+    use pyth_wormhole::external_address::{Self};
+    use pyth_wormhole::bytes32::{Self};
+    use pyth_wormhole::state::{State as WormState};
+    use pyth_wormhole::vaa::{Self, VAA};
 
     const DEPLOYER: address = @0x1234;
 
@@ -577,7 +577,7 @@ module pyth::pyth_tests{
     // }
 
     #[test]
-    #[expected_failure(abort_code = wormhole::vaa::E_WRONG_VERSION)]
+    #[expected_failure(abort_code = pyth_wormhole::vaa::E_WRONG_VERSION)]
     fun test_create_price_feeds_corrupt_vaa() {
         let (scenario, test_coins, clock) =  setup_test(500, 23, x"5d1f252d5de865279b00c84bce362774c2804294ed53299bc4a0389a5defef92", vector[], 50, 0);
         test_scenario::next_tx(&mut scenario, DEPLOYER);

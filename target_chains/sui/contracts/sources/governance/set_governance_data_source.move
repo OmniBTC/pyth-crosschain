@@ -5,10 +5,10 @@ module pyth::set_governance_data_source {
     use pyth::governance_action::{Self};
     use pyth::governance_witness::{Self, GovernanceWitness};
 
-    use wormhole::cursor;
-    use wormhole::external_address::{Self, ExternalAddress};
-    use wormhole::bytes32::{Self};
-    use wormhole::governance_message::{Self, DecreeTicket};
+    use pyth_wormhole::cursor;
+    use pyth_wormhole::external_address::{Self, ExternalAddress};
+    use pyth_wormhole::bytes32::{Self};
+    use pyth_wormhole::governance_message::{Self, DecreeTicket};
 
     friend pyth::governance;
 

@@ -11,9 +11,9 @@ module pyth::contract_upgrade {
     use sui::event::{Self};
     use sui::object::{ID};
     use sui::package::{UpgradeReceipt, UpgradeTicket};
-    use wormhole::bytes32::{Self, Bytes32};
-    use wormhole::cursor::{Self};
-    use wormhole::governance_message::{Self, DecreeTicket, DecreeReceipt};
+    use pyth_wormhole::bytes32::{Self, Bytes32};
+    use pyth_wormhole::cursor::{Self};
+    use pyth_wormhole::governance_message::{Self, DecreeTicket, DecreeReceipt};
 
     use pyth::state::{Self, State};
     use pyth::governance_witness::{GovernanceWitness, new_governance_witness};

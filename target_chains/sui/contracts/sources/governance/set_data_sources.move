@@ -1,10 +1,10 @@
 module pyth::set_data_sources {
     use std::vector;
 
-    use wormhole::cursor;
-    use wormhole::external_address::{Self};
-    use wormhole::bytes32::{Self};
-    use wormhole::governance_message::{Self, DecreeTicket};
+    use pyth_wormhole::cursor;
+    use pyth_wormhole::external_address::{Self};
+    use pyth_wormhole::bytes32::{Self};
+    use pyth_wormhole::governance_message::{Self, DecreeTicket};
 
     use pyth::deserialize;
     use pyth::data_source::{Self, DataSource};

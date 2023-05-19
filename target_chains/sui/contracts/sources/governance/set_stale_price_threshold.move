@@ -1,6 +1,6 @@
 module pyth::set_stale_price_threshold {
-    use wormhole::cursor;
-    use wormhole::governance_message::{Self, DecreeTicket};
+    use pyth_wormhole::cursor;
+    use pyth_wormhole::governance_message::{Self, DecreeTicket};
 
     use pyth::deserialize;
     use pyth::state::{Self, State, LatestOnly};

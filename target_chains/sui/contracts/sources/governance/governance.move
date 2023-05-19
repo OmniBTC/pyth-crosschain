@@ -9,7 +9,7 @@ module pyth::governance {
     use pyth::set_update_fee;
     use pyth::governance_witness::{GovernanceWitness};
 
-    use wormhole::governance_message::{Self, DecreeReceipt};
+    use pyth_wormhole::governance_message::{Self, DecreeReceipt};
 
     const E_INVALID_GOVERNANCE_ACTION: u64 = 0;
     const E_MUST_USE_CONTRACT_UPGRADE_MODULE_TO_DO_UPGRADES: u64 = 1;

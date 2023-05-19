@@ -12,7 +12,7 @@
 /// their required minimum version.
 module pyth::migrate {
     use sui::object::{ID};
-    use wormhole::governance_message::{Self, DecreeReceipt};
+    use pyth_wormhole::governance_message::{Self, DecreeReceipt};
 
     use pyth::state::{Self, State};
     use pyth::contract_upgrade::{Self};

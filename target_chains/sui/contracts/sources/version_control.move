@@ -6,7 +6,7 @@
 /// used to determine the latest version for this build. If the current version
 /// is not this build's, then paths through the `state` module will abort.
 ///
-/// See `pyth::state` and `wormhole::package_utils` for more info.
+/// See `pyth::state` and `pyth_wormhole::package_utils` for more info.
 module pyth::version_control {
     ////////////////////////////////////////////////////////////////////////////
     //
@@ -38,10 +38,10 @@ module pyth::version_control {
     /// RELEASE NOTES
     ///
     /// - Refactor state to use package management via
-    ///   `wormhole::package_utils`.
+    ///   `pyth_wormhole::package_utils`.
     /// - Add `MigrateComplete` event in `migrate`.
     ///
-    /// Also added `migrate__v__0_1_1` in `wormhole::state`, which is
+    /// Also added `migrate__v__0_1_1` in `pyth_wormhole::state`, which is
     /// meant to perform a one-time `State` modification via `migrate`.
     struct V__0_1_1 has store, drop, copy {}
 

@@ -1,7 +1,7 @@
 module pyth::set_fee_recipient {
-    use wormhole::cursor;
-    use wormhole::external_address::{Self};
-    use wormhole::governance_message::{Self, DecreeTicket};
+    use pyth_wormhole::cursor;
+    use pyth_wormhole::external_address::{Self};
+    use pyth_wormhole::governance_message::{Self, DecreeTicket};
 
     use pyth::state::{Self, State, LatestOnly};
     use pyth::governance_action::{Self};

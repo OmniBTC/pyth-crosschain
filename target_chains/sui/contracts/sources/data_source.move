@@ -5,7 +5,7 @@ module pyth::data_source {
 
     use pyth::set::{Self};
 
-    use wormhole::external_address::ExternalAddress;
+    use pyth_wormhole::external_address::ExternalAddress;
 
     friend pyth::state;
     friend pyth::set_data_sources;
