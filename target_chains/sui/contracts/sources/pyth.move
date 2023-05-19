@@ -423,7 +423,7 @@ module pyth::pyth_tests{
         // it from the sender.
         let upgrade_cap =
             package::test_publish(
-                object::id_from_address(@wormhole),
+                object::id_from_address(@pyth_wormhole),
                 test_scenario::ctx(&mut scenario)
             );
 
