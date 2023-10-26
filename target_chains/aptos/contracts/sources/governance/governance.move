@@ -1,7 +1,7 @@
 module pyth::governance {
-    use wormhole::vaa::{Self, VAA};
+    use pyth_wormhole::vaa::{Self, VAA};
     use pyth::data_source::{Self};
-    use wormhole::u16;
+    use pyth_wormhole::u16;
     use pyth::governance_instruction;
     use pyth::governance_action;
     use pyth::contract_upgrade;
@@ -63,7 +63,7 @@ module pyth::governance_test {
     use pyth::governance;
     use pyth::contract_upgrade_hash;
     use pyth::state;
-    use wormhole::external_address;
+    use pyth_wormhole::external_address;
     use std::account;
     use std::vector;
 
@@ -75,7 +75,7 @@ module pyth::governance_test {
         update_fee: u64,
     ) {
         // Initialize wormhole with a large message collection fee
-        wormhole::wormhole_test::setup(100000);
+        pyth_wormhole::wormhole_test::setup(100000);
 
         // Deploy and initialize a test instance of the Pyth contract
         let deployer = account::create_signer_with_capability(&
@@ -85,7 +85,7 @@ module pyth::governance_test {
     }
 
     #[test]
-    #[expected_failure(abort_code = 6)]
+    #[expected_failure(abort_code = 6, location = pyth_wormhole::vaa)]
     fun test_execute_governance_instruction_invalid_vaa() {
         setup_test(50, 24, x"f06413c0148c78916554f134dcd17a7c8029a3a2bda475a4a1182305c53078bf", 100);
         let vaa_bytes = x"6c436741b108";
@@ -93,7 +93,7 @@ module pyth::governance_test {
     }
 
     #[test]
-    #[expected_failure(abort_code = 65550)]
+    #[expected_failure(abort_code = 65550, location = pyth::governance)]
     fun test_execute_governance_instruction_invalid_data_source() {
         setup_test(100, 50, x"f06413c0148c78916554f134dcd17a7c8029a3a2bda475a4a1182305c53078bf", 100);
 
@@ -105,7 +105,7 @@ module pyth::governance_test {
     }
 
     #[test]
-    #[expected_failure(abort_code = 65551)]
+    #[expected_failure(abort_code = 65551, location = pyth::governance)]
     fun test_execute_governance_instruction_invalid_sequence_number_0() {
         setup_test(100, 50, x"f06413c0148c78916554f134dcd17a7c8029a3a2bda475a4a1182305c53078bf", 100);
         assert!(state::get_last_executed_governance_sequence() == 0, 1);
@@ -119,7 +119,7 @@ module pyth::governance_test {
     }
 
     #[test]
-    #[expected_failure(abort_code = 65556)]
+    #[expected_failure(abort_code = 65556, location = pyth::governance_instruction)]
     fun test_execute_governance_instruction_invalid_instruction_magic() {
         setup_test(100, 50, x"f06413c0148c78916554f134dcd17a7c8029a3a2bda475a4a1182305c53078bf", 100);
 
@@ -133,7 +133,7 @@ module pyth::governance_test {
     }
 
     #[test]
-    #[expected_failure(abort_code = 65548)]
+    #[expected_failure(abort_code = 65548, location = pyth::governance_instruction)]
     fun test_execute_governance_instruction_invalid_module() {
         setup_test(100, 50, x"f06413c0148c78916554f134dcd17a7c8029a3a2bda475a4a1182305c53078bf", 100);
 
@@ -148,7 +148,7 @@ module pyth::governance_test {
     }
 
     #[test]
-    #[expected_failure(abort_code = 65549)]
+    #[expected_failure(abort_code = 65549, location = pyth::governance_instruction)]
     fun test_execute_governance_instruction_invalid_target_chain() {
         setup_test(100, 50, x"f06413c0148c78916554f134dcd17a7c8029a3a2bda475a4a1182305c53078bf", 100);
 
@@ -164,7 +164,7 @@ module pyth::governance_test {
     }
 
     #[test]
-    #[expected_failure(abort_code = 65552)]
+    #[expected_failure(abort_code = 65552, location = pyth::governance_action)]
     fun test_execute_governance_instruction_invalid_action() {
         setup_test(100, 50, x"f06413c0148c78916554f134dcd17a7c8029a3a2bda475a4a1182305c53078bf", 100);
 
@@ -204,7 +204,7 @@ module pyth::governance_test {
     }
 
     #[test]
-    #[expected_failure(abort_code = 65558)]
+    #[expected_failure(abort_code = 65558, location = pyth::governance)]
     fun test_execute_governance_instruction_upgrade_contract_chain_id_zero() {
         setup_test(100, 50, x"f06413c0148c78916554f134dcd17a7c8029a3a2bda475a4a1182305c53078bf", 100);
 
@@ -280,7 +280,7 @@ module pyth::governance_test {
     }
 
     #[test]
-    #[expected_failure(abort_code = 65550)]
+    #[expected_failure(abort_code = 65550, location = pyth::governance)]
     fun test_execute_governance_instruction_set_governance_data_source_old_source_invalid() {
         let initial_governance_emitter_chain_id = 50;
         let initial_governance_emitter_address = x"f06413c0148c78916554f134dcd17a7c8029a3a2bda475a4a1182305c53078bf";

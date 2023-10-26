@@ -1,23 +1,11 @@
 # Pyth Price Service
 
+** Pyth price service is deprecated. Please use [Hermes](../../hermes/) instead. **
+
 The Pyth price service is a webservice that listens to the Wormhole Network for Pyth price updates and serves them via a
 convenient web API. The service allows users to easily query for recent price updates via a REST API, or subscribe to
-a websocket for streaming updates. [The Pyth Network Javascript SDKs](https://github.com/pyth-network/pyth-js) connect
+a websocket for streaming updates. [Price service JS client](https://github.com/pyth-network/pyth-crosschain/tree/main/price_service/sdk/js) connects
 to an instance of the price service in order to fetch on-demand price updates.
-
-## Public Endpoints
-
-The Pyth Data Association operates two public endpoints for the price service, for mainnet and testnet respectively.
-These endpoints can be used to test integrations with Pyth Network:
-
-| network | url                             |
-| ------- | ------------------------------- |
-| mainnet | https://xc-mainnet.pyth.network |
-| testnet | https://xc-testnet.pyth.network |
-
-For production deployments, developers integrating with Pyth Network are **strongly encouraged** to host their own instance of the price service for maximum resilience and decentralization.
-By running an independent instance of this service, developers tap directly into Wormhole's peer-to-peer network to stream Pyth price updates.
-This peer-to-peer network has built-in redundancy and is therefore inherently more reliable than a centralized service operated by the PDA.
 
 ## Wormhole Spy
 
@@ -56,6 +44,14 @@ price service you should:
 1. Build an image for using it first according to the section below.
 2. Change the price service image to your local docker image (e.g., `pyth_price_server`)
 
+### Self-Hosting
+
+If you would like to host your own instance of the price service, we recommend running the process on a 4 core machine with 4 GB of RAM.
+We also recommend using a host like [Latitude](https://www.latitude.sh/) or [Hetzner](https://www.hetzner.com/) and avoiding cloud service providers like AWS in order to reduce the cost.
+The price service participates in a peer-to-peer network which can use a lot of bandwidth.
+Cloud hosts like AWS charge high fees for bandwidth, which makes running the service much more expensive than necessary.
+Using one of the recommended hosts above should cost $10-50 / month.
+
 ## Build an image
 
 Build the image from [the repo root](../../) like below. It will create a
@@ -68,3 +64,9 @@ $ docker buildx build -f price_service/server/Dockerfile -t pyth_price_server .
 
 If you wish to build price service without docker, please follow the instruction of the price service
 [`Dockerfile`](./Dockerfile)
+
+## Known Issues
+
+The spy sometimes fails to connect to the peer-to-peer network on initialization. If this happens, the price
+service will not be able to retrieve any data. You can fix this problem by quitting, removing the containers from Docker,
+then restarting both containers. Simply stopping and starting the services tends not to work.

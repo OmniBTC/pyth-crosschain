@@ -1,5 +1,5 @@
 module pyth::set_update_fee {
-    use wormhole::cursor;
+    use pyth_wormhole::cursor;
     use pyth::deserialize;
     use std::math64;
     use pyth::state;

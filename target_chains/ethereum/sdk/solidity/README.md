@@ -3,7 +3,7 @@
 This package provides utilities for consuming prices from the [Pyth Network](https://pyth.network/) Oracle using Solidity. Also, it contains [the Pyth Interface ABI](./abis/IPyth.json) that you can use in your libraries
 to communicate with the Pyth contract.
 
-It is **strongly recommended** to follow the [consumer best practices](https://docs.pyth.network/consumers/best-practices) when consuming Pyth data.
+It is **strongly recommended** to follow the [consumer best practices](https://docs.pyth.network/documentation/pythnet-price-feeds/best-practices) when consuming Pyth data.
 
 ## Installation
 
@@ -52,15 +52,15 @@ contract ExampleContract {
 
 ## How Pyth Works on EVM Chains
 
-Pyth prices are published on Solana, and relayed to EVM chains using the [Wormhole Network](https://wormholenetwork.com/) as a cross-chain message passing bridge. The Wormhole Network observes when Pyth prices on Solana have changed and publishes an off-chain signed message attesting to this fact. This is explained in more detail [here](https://docs.wormholenetwork.com/wormhole/).
+Pyth prices are published on Pythnet, and relayed to EVM chains using the [Wormhole Network](https://wormholenetwork.com/) as a cross-chain message passing bridge. The Wormhole Network observes when Pyth prices on Pythnet have changed and publishes an off-chain signed message attesting to this fact. This is explained in more detail [here](https://docs.wormholenetwork.com/wormhole/).
 
 This signed message can then be submitted to the Pyth contract on the EVM networks along the required update fee for it, which will verify the Wormhole message and update the Pyth contract with the new price.
 
-Please refer to [Pyth On-Demand Updates page](https://docs.pyth.network/consume-data/on-demand) for more information.
+Please refer to [Pyth On-Demand Updates page](https://docs.pyth.network/documentation/pythnet-price-feeds/on-demand) for more information.
 
 ## Solidity Target Chains
 
-[This](https://docs.pyth.network/consume-data/evm#networks) document contains list of the EVM networks that Pyth is available on.
+[This](https://docs.pyth.network/documentation/pythnet-price-feeds/evm#networks) document contains list of the EVM networks that Pyth is available on.
 
 You can find a list of available price feeds [here](https://pyth.network/developers/price-feed-ids/).
 

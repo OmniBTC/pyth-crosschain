@@ -1,64 +1,63 @@
-use {
-    libp2p::Multiaddr,
-    std::{
-        net::SocketAddr,
-        path::PathBuf,
-    },
-    structopt::StructOpt,
+use clap::{
+    crate_authors,
+    crate_description,
+    crate_name,
+    crate_version,
+    Args,
+    Parser,
 };
 
-/// StructOpt definitions that provides the following arguments and commands:
-///
-/// Some of these arguments are not currently used, but are included for future use to guide the
-/// structure of the application.
-#[derive(StructOpt, Debug)]
-#[structopt(name = "pythnet", about = "PythNet")]
+mod benchmarks;
+mod metrics;
+mod pythnet;
+mod rpc;
+mod wormhole;
+
+// `Options` is a structup definition to provide clean command-line args for Hermes.
+#[derive(Parser, Debug)]
+#[command(name = crate_name!())]
+#[command(author = crate_authors!())]
+#[command(about = crate_description!())]
+#[command(version = crate_version!())]
+#[allow(clippy::large_enum_variant)]
 pub enum Options {
-    /// Run the PythNet P2P service.
-    Run {
-        /// A Path to a protobuf encoded ed25519 private key.
-        #[structopt(short, long)]
-        id: Option<PathBuf>,
+    /// Run the Hermes Price Service.
+    Run(RunOptions),
 
-        /// A Path to a protobuf encoded secp256k1 private key.
-        #[structopt(long)]
-        id_secp256k1: Option<PathBuf>,
+    /// Show Overridden Environment Variables.
+    ShowEnv(ShowEnvOptions),
+}
 
-        /// Network ID for Wormhole
-        #[structopt(long, env = "WORMHOLE_NETWORK_ID")]
-        wh_network_id: String,
+#[derive(Args, Clone, Debug)]
+pub struct RunOptions {
+    /// Wormhole Options.
+    #[command(flatten)]
+    pub wormhole: wormhole::Options,
 
-        /// Multiaddresses for Wormhole bootstrap peers (separated by comma).
-        #[structopt(long, use_delimiter = true, env = "WORMHOLE_BOOTSTRAP_ADDRS")]
-        wh_bootstrap_addrs: Vec<Multiaddr>,
+    /// PythNet Options
+    #[command(flatten)]
+    pub pythnet: pythnet::Options,
 
-        /// Multiaddresses to bind Wormhole P2P to (separated by comma)
-        #[structopt(
-            long,
-            use_delimiter = true,
-            default_value = "/ip4/0.0.0.0/udp/30910/quic,/ip6/::/udp/30910/quic",
-            env = "WORMHOLE_LISTEN_ADDRS"
-        )]
-        wh_listen_addrs: Vec<Multiaddr>,
+    /// RPC Options
+    #[command(flatten)]
+    pub rpc: rpc::Options,
 
-        /// The address to bind the RPC server to.
-        #[structopt(long, default_value = "127.0.0.1:33999")]
-        rpc_addr: SocketAddr,
+    /// Benchmarks Options
+    #[command(flatten)]
+    pub benchmarks: benchmarks::Options,
 
-        /// Multiaddress to bind Pyth P2P server to.
-        #[structopt(long, default_value = "/ip4/127.0.0.1/tcp/34000")]
-        p2p_addr: Multiaddr,
+    /// Metrics Options
+    #[command(flatten)]
+    pub metrics: metrics::Options,
+}
 
-        /// A bootstrapping peer to join the cluster.
-        #[allow(dead_code)]
-        #[structopt(long)]
-        p2p_peer: Vec<SocketAddr>,
-    },
-
-    /// Generate a new keypair.
-    Keygen {
-        /// The path to write the generated key to.
-        #[structopt(short, long)]
-        output: PathBuf,
-    },
+#[derive(Args, Clone, Debug)]
+pub struct ShowEnvOptions {
+    /// Show Hermes environment variables.
+    ///
+    /// By default this command will attempt to read the variable from the environment and fall
+    /// back to the argument default if not present. Set this flag if you want only the defaults
+    /// and to ignore the current environment.
+    #[arg(long = "defaults")]
+    pub defaults: bool,
 }

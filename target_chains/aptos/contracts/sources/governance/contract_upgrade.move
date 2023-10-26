@@ -1,5 +1,5 @@
 module pyth::contract_upgrade {
-    use wormhole::cursor;
+    use pyth_wormhole::cursor;
     use pyth::deserialize;
     use pyth::contract_upgrade_hash::{Self, Hash};
     use pyth::state::{Self};

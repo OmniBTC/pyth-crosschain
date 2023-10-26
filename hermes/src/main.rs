@@ -1,88 +1,102 @@
 #![feature(never_type)]
+#![feature(btree_cursors)]
 
 use {
-    crate::store::Store,
     anyhow::Result,
-    futures::{
-        channel::mpsc::Receiver,
-        SinkExt,
+    clap::{
+        CommandFactory,
+        Parser,
     },
-    std::time::Duration,
-    structopt::StructOpt,
-    tokio::{
-        spawn,
-        time::sleep,
+    futures::future::join_all,
+    state::State,
+    std::{
+        io::IsTerminal,
+        sync::atomic::AtomicBool,
     },
+    tokio::spawn,
 };
 
+mod aggregate;
+mod api;
 mod config;
-mod macros;
+mod metrics_server;
 mod network;
-mod store;
+mod serde;
+mod state;
 
-/// A Wormhole VAA is an array of bytes. TODO: Decoding.
-#[derive(Debug, Clone, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct Vaa {
-    pub data: Vec<u8>,
-}
-
-/// A PythNet AccountUpdate is a 32-byte address and a variable length data field.
-///
-/// This type is emitted by the Geyser plugin when an observed account is updated and is forwrarded
-/// to this process via IPC.
-#[derive(Debug, Clone, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct AccountUpdate {
-    addr: [u8; 32],
-    data: Vec<u8>,
-}
-
-/// Handler for LibP2P messages. Currently these consist only of Wormhole Observations.
-fn handle_message(_observation: network::p2p::Observation) -> Result<()> {
-    println!("Rust: Received Observation");
-    Ok(())
-}
+// A static exit flag to indicate to running threads that we're shutting down. This is used to
+// gracefully shutdown the application.
+//
+// NOTE: A more idiomatic approach would be to use a tokio::sync::broadcast channel, and to send a
+// shutdown signal to all running tasks. However, this is a bit more complicated to implement and
+// we don't rely on global state for anything else.
+pub(crate) static SHOULD_EXIT: AtomicBool = AtomicBool::new(false);
 
 /// Initialize the Application. This can be invoked either by real main, or by the Geyser plugin.
-async fn init(_update_channel: Receiver<AccountUpdate>) -> Result<()> {
-    log::info!("Initializing PythNet...");
+#[tracing::instrument]
+async fn init() -> Result<()> {
+    tracing::info!("Initializing Hermes...");
 
     // Parse the command line arguments with StructOpt, will exit automatically on `--help` or
     // with invalid arguments.
-    match config::Options::from_args() {
-        config::Options::Run {
-            id: _,
-            id_secp256k1: _,
-            wh_network_id,
-            wh_bootstrap_addrs,
-            wh_listen_addrs,
-            rpc_addr,
-            p2p_addr,
-            p2p_peer: _,
-        } => {
-            log::info!("Starting PythNet...");
+    match config::Options::parse() {
+        config::Options::Run(opts) => {
+            tracing::info!("Starting hermes service...");
 
-            // Spawn the P2P layer.
-            log::info!("Starting P2P server on {}", p2p_addr);
-            network::p2p::spawn(
-                handle_message,
-                wh_network_id.to_string(),
-                wh_bootstrap_addrs,
-                wh_listen_addrs,
-            )
-            .await?;
+            // The update channel is used to send store update notifications to the public API.
+            let (update_tx, update_rx) = tokio::sync::mpsc::channel(1000);
 
-            // Spawn the RPC server.
-            log::info!("Starting RPC server on {}", rpc_addr);
+            // Initialize a cache store with a 1000 element circular buffer.
+            let store = State::new(update_tx.clone(), 1000, opts.benchmarks.endpoint.clone());
 
-            // TODO: Add max size to the config
-            network::rpc::spawn(rpc_addr.to_string(), Store::new_with_local_cache(1000)).await?;
+            // Listen for Ctrl+C so we can set the exit flag and wait for a graceful shutdown.
+            spawn(async move {
+                tracing::info!("Registered shutdown signal handler...");
+                tokio::signal::ctrl_c().await.unwrap();
+                tracing::info!("Shut down signal received, waiting for tasks...");
+                SHOULD_EXIT.store(true, std::sync::atomic::Ordering::Release);
+            });
 
-            // Wait on Ctrl+C similar to main.
-            tokio::signal::ctrl_c().await?;
+            // Spawn all worker tasks, and wait for all to complete (which will happen if a shutdown
+            // signal has been observed).
+            let tasks = join_all([
+                Box::pin(spawn(network::wormhole::spawn(opts.clone(), store.clone()))),
+                Box::pin(spawn(network::pythnet::spawn(opts.clone(), store.clone()))),
+                Box::pin(spawn(metrics_server::run(opts.clone(), store.clone()))),
+                Box::pin(spawn(api::spawn(opts.clone(), store.clone(), update_rx))),
+            ])
+            .await;
+
+            for task in tasks {
+                task??;
+            }
         }
 
-        config::Options::Keygen { output: _ } => {
-            println!("Currently not implemented.");
+        config::Options::ShowEnv(opts) => {
+            // For each subcommand, scan for arguments that allow overriding with an ENV variable
+            // and print that variable.
+            for subcommand in config::Options::command().get_subcommands() {
+                for arg in subcommand.get_arguments() {
+                    if let Some(env) = arg.get_env().and_then(|env| env.to_str()) {
+                        // Find the defaults for this argument, if present.
+                        let defaults = arg
+                            .get_default_values()
+                            .iter()
+                            .map(|v| v.to_str().unwrap())
+                            .collect::<Vec<_>>()
+                            .join(",");
+
+                        println!(
+                            "{}={}",
+                            env,
+                            match opts.defaults {
+                                true => defaults,
+                                false => std::env::var(env).unwrap_or(defaults),
+                            }
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -90,51 +104,27 @@ async fn init(_update_channel: Receiver<AccountUpdate>) -> Result<()> {
 }
 
 #[tokio::main]
-async fn main() -> Result<!> {
-    env_logger::init();
+#[tracing::instrument]
+async fn main() -> Result<()> {
+    // Initialize a Tracing Subscriber
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::fmt()
+            .compact()
+            .with_file(false)
+            .with_line_number(true)
+            .with_thread_ids(true)
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_ansi(std::io::stderr().is_terminal())
+            .finish(),
+    )?;
 
-    // Generate a stream of fake AccountUpdates when run in binary mode. This is temporary until
-    // the Geyser component of the accumulator work is complete.
-    let (mut tx, rx) = futures::channel::mpsc::channel(1);
+    // Launch the application. If it fails, print the full backtrace and exit. RUST_BACKTRACE
+    // should be set to 1 for this otherwise it will only print the top-level error.
+    if let Err(result) = init().await {
+        eprintln!("{}", result.backtrace());
+        result.chain().for_each(|cause| eprintln!("{cause}"));
+        std::process::exit(1);
+    }
 
-    spawn(async move {
-        let mut data = 0u32;
-
-        loop {
-            // Simulate PythNet block time.
-            sleep(Duration::from_millis(200)).await;
-
-            // Ignore the return type of `send`, since we don't care if the receiver is closed.
-            // It's better to let the process continue to run as this is just a temporary hack.
-            let _ = SinkExt::send(
-                &mut tx,
-                AccountUpdate {
-                    addr: [0; 32],
-                    data: {
-                        data += 1;
-                        let mut data = data.to_be_bytes().to_vec();
-                        data.resize(32, 0);
-                        data
-                    },
-                },
-            )
-            .await;
-        }
-    });
-
-    tokio::spawn(async move {
-        // Launch the application. If it fails, print the full backtrace and exit. RUST_BACKTRACE
-        // should be set to 1 for this otherwise it will only print the top-level error.
-        if let Err(result) = init(rx).await {
-            eprintln!("{}", result.backtrace());
-            for cause in result.chain() {
-                eprintln!("{cause}");
-            }
-        }
-    });
-
-    // TODO: Setup a Ctrl-C handler that waits. We use process::exit(0) for now but we should have
-    // a graceful shutdown with an AtomicBool or similar before production.
-    tokio::signal::ctrl_c().await?;
-    std::process::exit(0);
+    Ok(())
 }

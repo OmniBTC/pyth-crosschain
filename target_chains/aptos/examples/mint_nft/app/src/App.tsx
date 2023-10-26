@@ -1,24 +1,24 @@
-import React from "react";
-import logo from "./logo.svg";
-import "./App.css";
-import { Price, PriceFeed } from "@pythnetwork/pyth-common-js";
 import { AptosPriceServiceConnection } from "@pythnetwork/pyth-aptos-js";
+import { Price, PriceFeed } from "@pythnetwork/pyth-common-js";
+import React from "react";
+import "./App.css";
+import logo from "./logo.svg";
 
-// Please read https://docs.pyth.network/consume-data before building on Pyth
+// Please read https://docs.pyth.network/documentation/pythnet-price-feeds before building on Pyth
 
 // Rpc endpoint
-const TESTNET_PRICE_SERVICE = "https://xc-testnet.pyth.network";
+const TESTNET_HERMES_ENDPOINT = "https://hermes-beta.pyth.network";
 
 // Connection
 const testnetConnection = new AptosPriceServiceConnection(
-  TESTNET_PRICE_SERVICE
+  TESTNET_HERMES_ENDPOINT
 ); // Price service client used to retrieve the offchain VAAs to update the onchain price
 
 // Price id : this is not an aptos account but instead an opaque identifier for each price https://pyth.network/developers/price-feed-ids/#pyth-cross-chain-testnet
 const APT_USD_TESTNET_PRICE_ID =
   "0x44a93dddd8effa54ea51076c4e851b6cbbfd938e82eb90197de38fe8876bb66e";
 
-// Aptos modules : These are testnet addresses https://docs.pyth.network/consume-data/aptos#addresses
+// Aptos modules : These are testnet addresses https://docs.pyth.network/documentation/pythnet-price-feeds/aptos
 const MINT_NFT_MODULE =
   "0x19f8503273cdb5aa93ffe4539277684615242127aa2e65ef91424136a316c9c7";
 

@@ -8,7 +8,7 @@ Pyth is a cross-chain oracle that streams price updates over the peer-to-peer [W
 These price updates can be consumed on any chain that has a deployment of the Pyth contract.
 By default, Pyth does not automatically update the on-chain price every time the off-chain price changes;
 instead, anyone can permissionlessly update the on-chain price prior to using it.
-For more information please refer to [this document](https://docs.pyth.network/design-overview).
+For more information please refer to [this document](https://docs.pyth.network/documentation/how-pyth-works).
 
 Protocols integrating with can update the on-chain Pyth prices in two different ways.
 The first approach is on-demand updates: package a Pyth price update together with each transaction that depends on it.
@@ -37,8 +37,19 @@ The parameters above are configured per price feed in a price configuration YAML
   time_difference: 60 # Time difference threshold (in seconds) to push a newer price feed.
   price_deviation: 0.5 # The price deviation (%) threshold to push a newer price feed.
   confidence_ratio: 1 # The confidence/price (%) threshold to push a newer price feed.
+  # Optional block to configure whether this feed can be early updated. If at least one feed meets the
+  # triggering conditions above, all other feeds who meet the early update conditions will be included in
+  # the submitted batch of prices. This logic takes advantage of the fact that adding a feed to a larger
+  # batch of updates incurs a minimal gas cost. All fields below are optional (and interpreted as infinity if omitted)
+  # and have the same semantics as the corresponding fields above.
+  early_update:
+    time_difference: 30
+    price_deviation: 0.1
+    confidence_ratio: 0.5
 - ...
 ```
+
+Two sample YAML configuration files are available in the root of this repo.
 
 You can get the list of available price feeds from
 [here](https://pyth.network/developers/price-feed-ids/).
@@ -57,7 +68,7 @@ cd price_pusher
 npm run start -- evm --endpoint wss://example-rpc.com \
     --pyth-contract-address 0xff1a0f4744e8582DF...... \
     --price-service-endpoint https://example-pyth-price.com \
-    --price-config-file "path/to/price-config-file.yaml.testnet.sample.yaml" \
+    --price-config-file "path/to/price-config.testnet.sample.yaml" \
     --mnemonic-file "path/to/mnemonic.txt" \
     [--pushing-frequency 10] \
     [--polling-frequency 5] \
@@ -66,18 +77,34 @@ npm run start -- evm --endpoint wss://example-rpc.com \
 # For Injective
 npm run start -- injective --grpc-endpoint https://grpc-endpoint.com \
     --pyth-contract-address inj1z60tg0... --price-service-endpoint "https://example-pyth-price.com" \
-    --price-config-file "path/to/price-config-file.yaml.testnet.sample.yaml" \
+    --price-config-file "path/to/price-config.testnet.sample.yaml" \
     --mnemonic-file "path/to/mnemonic.txt" \
+    --network testnet \
     [--pushing-frequency 10] \
-    [--polling-frequency 5] \
+    [--polling-frequency 5]
 
 # For Aptos
 npm run start -- aptos --endpoint https://fullnode.testnet.aptoslabs.com/v1 \
-    --pyth-contract-address 0x7e783b349d3e89cf5931af376ebeadbfab855b3fa239b7ada8f5a92fbea6b387 --price-service-endpoint "https://xc-testnet.pyth.network" \
+    --pyth-contract-address 0x7e783b349d3e89cf5931af376ebeadbfab855b3fa239b7ada8f5a92fbea6b387 --price-service-endpoint "https://hermes-beta.pyth.network" \
     --price-config-file "./price-config.testnet.sample.yaml" \
     --mnemonic-file "path/to/mnemonic.txt" \
     [--pushing-frequency 10] \
-    [--polling-frequency 5] \
+    [--polling-frequency 5]
+
+# For Sui
+npm run start -- sui \
+  --endpoint https://sui-testnet-rpc.allthatnode.com \
+  --pyth-package-id 0x975e063f398f720af4f33ec06a927f14ea76ca24f7f8dd544aa62ab9d5d15f44 \
+  --pyth-state-id 0xd8afde3a48b4ff7212bd6829a150f43f59043221200d63504d981f62bff2e27a \
+  --wormhole-package-id 0xcc029e2810f17f9f43f52262f40026a71fbdca40ed3803ad2884994361910b7e \
+  --wormhole-state-id 0xebba4cc4d614f7a7cdbe883acc76d1cc767922bc96778e7b68be0d15fce27c02 \
+  --price-feed-to-price-info-object-table-id 0xf8929174008c662266a1adde78e1e8e33016eb7ad37d379481e860b911e40ed5 \
+  --price-service-endpoint https://hermes-beta.pyth.network \
+  --mnemonic-file ./mnemonic \
+  --price-config-file ./price-config.testnet.sample.yaml \
+  [--pushing-frequency 10] \
+  [--polling-frequency 5] \
+  [--num-gas-objects 30]
 
 
 # Or, run the price pusher docker image instead of building from the source
@@ -101,7 +128,7 @@ For example, to push `BTC/USD` and `BNB/USD` prices on Fantom testnet, run the f
 
 ```sh
 npm run dev -- evm --endpoint https://endpoints.omniatech.io/v1/fantom/testnet/public \
-    --pyth-contract-address 0xff1a0f4744e8582DF1aE09D5611b887B6a12925C --price-service-endpoint https://xc-testnet.pyth.network \
+    --pyth-contract-address 0xff1a0f4744e8582DF1aE09D5611b887B6a12925C --price-service-endpoint https://hermes-beta.pyth.network \
     --mnemonic-file "./mnemonic" --price-config-file "./price-config.testnet.sample.yaml"
 ```
 

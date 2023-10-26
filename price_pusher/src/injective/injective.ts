@@ -19,6 +19,7 @@ import {
   TxResponse,
   createTransactionFromMsg,
 } from "@injectivelabs/sdk-ts";
+import { Account } from "@injectivelabs/sdk-ts/dist/cjs/client/chain/types/auth";
 
 const DEFAULT_GAS_PRICE = 500000000;
 
@@ -93,6 +94,7 @@ type InjectiveConfig = {
 export class InjectivePricePusher implements IPricePusher {
   private wallet: PrivateKey;
   private chainConfig: InjectiveConfig;
+  private account: Account | null = null;
 
   constructor(
     private priceServiceConnection: PriceServiceConnection,
@@ -116,12 +118,14 @@ export class InjectivePricePusher implements IPricePusher {
 
   private async signAndBroadcastMsg(msg: Msgs): Promise<TxResponse> {
     const chainGrpcAuthApi = new ChainGrpcAuthApi(this.grpcEndpoint);
-    const account = await chainGrpcAuthApi.fetchAccount(
+    // Fetch the latest account details only if it's not stored.
+    this.account ??= await chainGrpcAuthApi.fetchAccount(
       this.injectiveAddress()
     );
+
     const { txRaw: simulateTxRaw } = createTransactionFromMsg({
-      sequence: account.baseAccount.sequence,
-      accountNumber: account.baseAccount.accountNumber,
+      sequence: this.account.baseAccount.sequence,
+      accountNumber: this.account.baseAccount.accountNumber,
       message: msg,
       chainId: this.chainConfig.chainId,
       pubKey: this.wallet.toPublicKey().toBase64(),
@@ -129,44 +133,53 @@ export class InjectivePricePusher implements IPricePusher {
 
     const txService = new TxGrpcClient(this.grpcEndpoint);
     // simulation
-    const {
-      gasInfo: { gasUsed },
-    } = await txService.simulate(simulateTxRaw);
+    try {
+      const {
+        gasInfo: { gasUsed },
+      } = await txService.simulate(simulateTxRaw);
 
-    // simulation returns us the approximate gas used
-    // gas passed with the transaction should be more than that
-    // in order for it to be successfully executed
-    // this multiplier takes care of that
-    const fee = {
-      amount: [
-        {
-          denom: "inj",
-          amount: (
-            gasUsed *
-            this.chainConfig.gasPrice *
-            this.chainConfig.gasMultiplier
-          ).toFixed(),
-        },
-      ],
-      gas: (gasUsed * this.chainConfig.gasMultiplier).toFixed(),
-    };
+      // simulation returns us the approximate gas used
+      // gas passed with the transaction should be more than that
+      // in order for it to be successfully executed
+      // this multiplier takes care of that
+      const gas = (gasUsed * this.chainConfig.gasMultiplier).toFixed();
+      const fee = {
+        amount: [
+          {
+            denom: "inj",
+            amount: (Number(gas) * this.chainConfig.gasPrice).toFixed(),
+          },
+        ],
+        gas,
+      };
 
-    const { signBytes, txRaw } = createTransactionFromMsg({
-      sequence: account.baseAccount.sequence,
-      accountNumber: account.baseAccount.accountNumber,
-      message: msg,
-      chainId: this.chainConfig.chainId,
-      fee,
-      pubKey: this.wallet.toPublicKey().toBase64(),
-    });
+      const { signBytes, txRaw } = createTransactionFromMsg({
+        sequence: this.account.baseAccount.sequence,
+        accountNumber: this.account.baseAccount.accountNumber,
+        message: msg,
+        chainId: this.chainConfig.chainId,
+        fee,
+        pubKey: this.wallet.toPublicKey().toBase64(),
+      });
 
-    const sig = await this.wallet.sign(Buffer.from(signBytes));
+      const sig = await this.wallet.sign(Buffer.from(signBytes));
 
-    /** Append Signatures */
-    txRaw.signatures = [sig];
-    const txResponse = await txService.broadcast(txRaw);
+      this.account.baseAccount.sequence++;
 
-    return txResponse;
+      /** Append Signatures */
+      txRaw.signatures = [sig];
+      // this takes approx 5 seconds
+      const txResponse = await txService.broadcast(txRaw);
+
+      return txResponse;
+    } catch (e: any) {
+      // The sequence number was invalid and hence we will have to fetch it again.
+      if (JSON.stringify(e).match(/account sequence mismatch/) !== null) {
+        // We need to fetch the account details again.
+        this.account = null;
+      }
+      throw e;
+    }
   }
 
   async getPriceFeedUpdateObject(priceIds: string[]): Promise<any> {
@@ -231,9 +244,6 @@ export class InjectivePricePusher implements IPricePusher {
       });
 
       const rs = await this.signAndBroadcastMsg(executeMsg);
-
-      if (rs.code !== 0) throw new Error("Error: transaction failed");
-
       console.log("Succesfully broadcasted txHash:", rs.txHash);
     } catch (e: any) {
       if (e.message.match(/account inj[a-zA-Z0-9]+ not found/) !== null) {

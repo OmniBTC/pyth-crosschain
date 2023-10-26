@@ -71,37 +71,65 @@ abstract contract Pyth is
     function updatePriceFeeds(
         bytes[] calldata updateData
     ) public payable override {
-        // TODO: Is this fee model still good for accumulator?
-        uint requiredFee = getUpdateFee(updateData);
-        if (msg.value < requiredFee) revert PythErrors.InsufficientFee();
-
+        uint totalNumUpdates = 0;
         for (uint i = 0; i < updateData.length; ) {
             if (
                 updateData[i].length > 4 &&
-                UnsafeBytesLib.toUint32(updateData[i], 0) == ACCUMULATOR_MAGIC
+                UnsafeCalldataBytesLib.toUint32(updateData[i], 0) ==
+                ACCUMULATOR_MAGIC
             ) {
-                updatePricesUsingAccumulator(updateData[i]);
+                totalNumUpdates += updatePriceInfosFromAccumulatorUpdate(
+                    updateData[i]
+                );
             } else {
                 updatePriceBatchFromVm(updateData[i]);
+                totalNumUpdates += 1;
             }
 
             unchecked {
                 i++;
             }
         }
+        uint requiredFee = getTotalFee(totalNumUpdates);
+        if (msg.value < requiredFee) revert PythErrors.InsufficientFee();
     }
 
     /// This method is deprecated, please use the `getUpdateFee(bytes[])` instead.
     function getUpdateFee(
         uint updateDataSize
     ) public view returns (uint feeAmount) {
-        return singleUpdateFeeInWei() * updateDataSize;
+        // In the accumulator update data a single update can contain
+        // up to 255 messages and we charge a singleUpdateFee per each
+        // message
+        return 255 * singleUpdateFeeInWei() * updateDataSize;
     }
 
     function getUpdateFee(
         bytes[] calldata updateData
     ) public view override returns (uint feeAmount) {
-        return singleUpdateFeeInWei() * updateData.length;
+        uint totalNumUpdates = 0;
+        for (uint i = 0; i < updateData.length; i++) {
+            if (
+                updateData[i].length > 4 &&
+                UnsafeCalldataBytesLib.toUint32(updateData[i], 0) ==
+                ACCUMULATOR_MAGIC
+            ) {
+                (
+                    uint offset,
+                    UpdateType updateType
+                ) = extractUpdateTypeFromAccumulatorHeader(updateData[i]);
+                if (updateType != UpdateType.WormholeMerkle) {
+                    revert PythErrors.InvalidUpdateData();
+                }
+                totalNumUpdates += parseWormholeMerkleHeaderNumUpdates(
+                    updateData[i],
+                    offset
+                );
+            } else {
+                totalNumUpdates += 1;
+            }
+        }
+        return getTotalFee(totalNumUpdates);
     }
 
     function verifyPythVM(
@@ -119,7 +147,6 @@ abstract contract Pyth is
         // operations have proper require.
         unchecked {
             bytes memory encoded = vm.payload;
-
             (
                 uint index,
                 uint nAttestations,
@@ -413,6 +440,182 @@ abstract contract Pyth is
         if (!verifyPythVM(vm)) revert PythErrors.InvalidUpdateDataSource();
     }
 
+    function parsePriceFeedUpdatesInternal(
+        bytes[] calldata updateData,
+        bytes32[] calldata priceIds,
+        PythInternalStructs.ParseConfig memory config
+    ) internal returns (PythStructs.PriceFeed[] memory priceFeeds) {
+        {
+            uint requiredFee = getUpdateFee(updateData);
+            if (msg.value < requiredFee) revert PythErrors.InsufficientFee();
+        }
+        unchecked {
+            priceFeeds = new PythStructs.PriceFeed[](priceIds.length);
+            for (uint i = 0; i < updateData.length; i++) {
+                if (
+                    updateData[i].length > 4 &&
+                    UnsafeCalldataBytesLib.toUint32(updateData[i], 0) ==
+                    ACCUMULATOR_MAGIC
+                ) {
+                    uint offset;
+                    {
+                        UpdateType updateType;
+                        (
+                            offset,
+                            updateType
+                        ) = extractUpdateTypeFromAccumulatorHeader(
+                            updateData[i]
+                        );
+
+                        if (updateType != UpdateType.WormholeMerkle) {
+                            revert PythErrors.InvalidUpdateData();
+                        }
+                    }
+
+                    bytes20 digest;
+                    uint8 numUpdates;
+                    bytes calldata encoded;
+                    (
+                        offset,
+                        digest,
+                        numUpdates,
+                        encoded
+                    ) = extractWormholeMerkleHeaderDigestAndNumUpdatesAndEncodedFromAccumulatorUpdate(
+                        updateData[i],
+                        offset
+                    );
+
+                    for (uint j = 0; j < numUpdates; j++) {
+                        PythInternalStructs.PriceInfo memory info;
+                        bytes32 priceId;
+                        uint64 prevPublishTime;
+                        (
+                            offset,
+                            info,
+                            priceId,
+                            prevPublishTime
+                        ) = extractPriceInfoFromMerkleProof(
+                            digest,
+                            encoded,
+                            offset
+                        );
+                        {
+                            // check whether caller requested for this data
+                            uint k = findIndexOfPriceId(priceIds, priceId);
+
+                            // If priceFeed[k].id != 0 then it means that there was a valid
+                            // update for priceIds[k] and we don't need to process this one.
+                            if (k == priceIds.length || priceFeeds[k].id != 0) {
+                                continue;
+                            }
+
+                            uint publishTime = uint(info.publishTime);
+                            // Check the publish time of the price is within the given range
+                            // and only fill the priceFeedsInfo if it is.
+                            // If is not, default id value of 0 will still be set and
+                            // this will allow other updates for this price id to be processed.
+                            if (
+                                publishTime >= config.minPublishTime &&
+                                publishTime <= config.maxPublishTime &&
+                                (!config.checkUniqueness ||
+                                    config.minPublishTime > prevPublishTime)
+                            ) {
+                                fillPriceFeedFromPriceInfo(
+                                    priceFeeds,
+                                    k,
+                                    priceId,
+                                    info,
+                                    publishTime
+                                );
+                            }
+                        }
+                    }
+                    if (offset != encoded.length)
+                        revert PythErrors.InvalidUpdateData();
+                } else {
+                    bytes memory encoded;
+                    {
+                        IWormhole.VM
+                            memory vm = parseAndVerifyBatchAttestationVM(
+                                updateData[i]
+                            );
+                        encoded = vm.payload;
+                    }
+
+                    /** Batch price logic */
+                    // TODO: gas optimization
+                    (
+                        uint index,
+                        uint nAttestations,
+                        uint attestationSize
+                    ) = parseBatchAttestationHeader(encoded);
+
+                    // Deserialize each attestation
+                    for (uint j = 0; j < nAttestations; j++) {
+                        // NOTE: We don't advance the global index immediately.
+                        // attestationIndex is an attestation-local offset used
+                        // for readability and easier debugging.
+                        uint attestationIndex = 0;
+
+                        // Unused bytes32 product id
+                        attestationIndex += 32;
+
+                        bytes32 priceId = UnsafeBytesLib.toBytes32(
+                            encoded,
+                            index + attestationIndex
+                        );
+
+                        // check whether caller requested for this data
+                        uint k = findIndexOfPriceId(priceIds, priceId);
+
+                        // If priceFeed[k].id != 0 then it means that there was a valid
+                        // update for priceIds[k] and we don't need to process this one.
+                        if (k == priceIds.length || priceFeeds[k].id != 0) {
+                            index += attestationSize;
+                            continue;
+                        }
+
+                        (
+                            PythInternalStructs.PriceInfo memory info,
+
+                        ) = parseSingleAttestationFromBatch(
+                                encoded,
+                                index,
+                                attestationSize
+                            );
+
+                        uint publishTime = uint(info.publishTime);
+                        // Check the publish time of the price is within the given range
+                        // and only fill the priceFeedsInfo if it is.
+                        // If is not, default id value of 0 will still be set and
+                        // this will allow other updates for this price id to be processed.
+                        if (
+                            publishTime >= config.minPublishTime &&
+                            publishTime <= config.maxPublishTime &&
+                            !config.checkUniqueness // do not allow batch updates to be used by parsePriceFeedUpdatesUnique
+                        ) {
+                            fillPriceFeedFromPriceInfo(
+                                priceFeeds,
+                                k,
+                                priceId,
+                                info,
+                                publishTime
+                            );
+                        }
+
+                        index += attestationSize;
+                    }
+                }
+            }
+
+            for (uint k = 0; k < priceIds.length; k++) {
+                if (priceFeeds[k].id == 0) {
+                    revert PythErrors.PriceFeedNotFoundWithinRange();
+                }
+            }
+        }
+    }
+
     function parsePriceFeedUpdates(
         bytes[] calldata updateData,
         bytes32[] calldata priceIds,
@@ -424,101 +627,76 @@ abstract contract Pyth is
         override
         returns (PythStructs.PriceFeed[] memory priceFeeds)
     {
-        unchecked {
-            {
-                uint requiredFee = getUpdateFee(updateData);
-                if (msg.value < requiredFee)
-                    revert PythErrors.InsufficientFee();
-            }
+        return
+            parsePriceFeedUpdatesInternal(
+                updateData,
+                priceIds,
+                PythInternalStructs.ParseConfig(
+                    minPublishTime,
+                    maxPublishTime,
+                    false
+                )
+            );
+    }
 
-            priceFeeds = new PythStructs.PriceFeed[](priceIds.length);
+    function parsePriceFeedUpdatesUnique(
+        bytes[] calldata updateData,
+        bytes32[] calldata priceIds,
+        uint64 minPublishTime,
+        uint64 maxPublishTime
+    )
+        external
+        payable
+        override
+        returns (PythStructs.PriceFeed[] memory priceFeeds)
+    {
+        return
+            parsePriceFeedUpdatesInternal(
+                updateData,
+                priceIds,
+                PythInternalStructs.ParseConfig(
+                    minPublishTime,
+                    maxPublishTime,
+                    true
+                )
+            );
+    }
 
-            for (uint i = 0; i < updateData.length; i++) {
-                bytes memory encoded;
+    function getTotalFee(
+        uint totalNumUpdates
+    ) private view returns (uint requiredFee) {
+        return totalNumUpdates * singleUpdateFeeInWei();
+    }
 
-                {
-                    IWormhole.VM memory vm = parseAndVerifyBatchAttestationVM(
-                        updateData[i]
-                    );
-                    encoded = vm.payload;
-                }
-
-                (
-                    uint index,
-                    uint nAttestations,
-                    uint attestationSize
-                ) = parseBatchAttestationHeader(encoded);
-
-                // Deserialize each attestation
-                for (uint j = 0; j < nAttestations; j++) {
-                    // NOTE: We don't advance the global index immediately.
-                    // attestationIndex is an attestation-local offset used
-                    // for readability and easier debugging.
-                    uint attestationIndex = 0;
-
-                    // Unused bytes32 product id
-                    attestationIndex += 32;
-
-                    bytes32 priceId = UnsafeBytesLib.toBytes32(
-                        encoded,
-                        index + attestationIndex
-                    );
-
-                    // Check whether the caller requested for this data.
-                    uint k = 0;
-                    for (; k < priceIds.length; k++) {
-                        if (priceIds[k] == priceId) {
-                            break;
-                        }
-                    }
-
-                    // If priceFeed[k].id != 0 then it means that there was a valid
-                    // update for priceIds[k] and we don't need to process this one.
-                    if (k == priceIds.length || priceFeeds[k].id != 0) {
-                        index += attestationSize;
-                        continue;
-                    }
-
-                    (
-                        PythInternalStructs.PriceInfo memory info,
-
-                    ) = parseSingleAttestationFromBatch(
-                            encoded,
-                            index,
-                            attestationSize
-                        );
-
-                    priceFeeds[k].id = priceId;
-                    priceFeeds[k].price.price = info.price;
-                    priceFeeds[k].price.conf = info.conf;
-                    priceFeeds[k].price.expo = info.expo;
-                    priceFeeds[k].price.publishTime = uint(info.publishTime);
-                    priceFeeds[k].emaPrice.price = info.emaPrice;
-                    priceFeeds[k].emaPrice.conf = info.emaConf;
-                    priceFeeds[k].emaPrice.expo = info.expo;
-                    priceFeeds[k].emaPrice.publishTime = uint(info.publishTime);
-
-                    // Check the publish time of the price is within the given range
-                    // if it is not, then set the id to 0 to indicate that this price id
-                    // still does not have a valid price feed. This will allow other updates
-                    // for this price id to be processed.
-                    if (
-                        priceFeeds[k].price.publishTime < minPublishTime ||
-                        priceFeeds[k].price.publishTime > maxPublishTime
-                    ) {
-                        priceFeeds[k].id = 0;
-                    }
-
-                    index += attestationSize;
-                }
-            }
-
-            for (uint k = 0; k < priceIds.length; k++) {
-                if (priceFeeds[k].id == 0) {
-                    revert PythErrors.PriceFeedNotFoundWithinRange();
-                }
+    function findIndexOfPriceId(
+        bytes32[] calldata priceIds,
+        bytes32 targetPriceId
+    ) private pure returns (uint index) {
+        uint k = 0;
+        for (; k < priceIds.length; k++) {
+            if (priceIds[k] == targetPriceId) {
+                break;
             }
         }
+        return k;
+    }
+
+    function fillPriceFeedFromPriceInfo(
+        PythStructs.PriceFeed[] memory priceFeeds,
+        uint k,
+        bytes32 priceId,
+        PythInternalStructs.PriceInfo memory info,
+        uint publishTime
+    ) private pure {
+        priceFeeds[k].id = priceId;
+        priceFeeds[k].price.price = info.price;
+        priceFeeds[k].price.conf = info.conf;
+        priceFeeds[k].price.expo = info.expo;
+        priceFeeds[k].price.publishTime = publishTime;
+        priceFeeds[k].emaPrice.price = info.emaPrice;
+        priceFeeds[k].emaPrice.conf = info.emaConf;
+        priceFeeds[k].emaPrice.expo = info.expo;
+        priceFeeds[k].emaPrice.publishTime = publishTime;
     }
 
     function queryPriceFeed(
@@ -549,6 +727,6 @@ abstract contract Pyth is
     }
 
     function version() public pure returns (string memory) {
-        return "1.3.0-alpha";
+        return "1.3.2";
     }
 }

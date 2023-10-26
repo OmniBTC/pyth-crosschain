@@ -1,4 +1,4 @@
-# Defined in tilt_devnet/docker_images/Dockerfile.lerna
+# Defined in Dockerfile.lerna
 FROM lerna:latest
 
 USER root
@@ -8,6 +8,7 @@ USER 1000
 
 # local dependencies
 COPY --chown=1000:1000 target_chains/ethereum/sdk/solidity target_chains/ethereum/sdk/solidity
+COPY --chown=1000:1000 target_chains/sui/sdk/js target_chains/sui/sdk/js
 COPY --chown=1000:1000 price_service/client/js price_service/client/js
 COPY --chown=1000:1000 price_service/sdk/js price_service/sdk/js
 

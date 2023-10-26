@@ -6,75 +6,44 @@ use std::{
 
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let out_var = env::var("OUT_DIR").unwrap();
 
-    // Clone the Wormhole repository, which we need to access the protobuf definitions for Wormhole
-    // P2P message types.
-    //
-    // TODO: This is ugly and costly, and requires git. Instead of this we should have our own tool
-    // build process that can generate protobuf definitions for this and other user cases. For now
-    // this is easy and works and matches upstream Wormhole's `Makefile`.
-    let _ = Command::new("git")
-        .args([
-            "clone",
-            "https://github.com/wormhole-foundation/wormhole",
-            "wormhole",
-        ])
+    // Print OUT_DIR for debugging build issues.
+    println!("OUT_DIR={}", out_dir.display());
+
+    // We'll use git to pull in protobuf dependencies. This trick lets us use the Rust OUT_DIR
+    // directory as a mini-repo with wormhole and googleapis as remotes, so we can copy out the
+    // TREEISH paths we want.
+    let protobuf_setup = r#"
+        git init .
+        git clean -df
+        git remote add wormhole https://github.com/wormhole-foundation/wormhole.git
+        git remote add googleapis https://github.com/googleapis/googleapis.git
+        git fetch --depth=1 wormhole main
+        git fetch --depth=1 googleapis master
+        git read-tree --prefix=proto/ -u wormhole/main:proto
+        git read-tree --prefix=proto/google/api/ -u googleapis/master:google/api
+    "#;
+
+    // Run each command to prepare the OUT_DIR with the protobuf definitions. We need to make sure
+    // to change the working directory to OUT_DIR, otherwise git will complain.
+    let _ = Command::new("sh")
+        .args(["-c", protobuf_setup])
+        .current_dir(&out_dir)
         .output()
-        .expect("failed to execute process");
+        .expect("failed to setup protobuf definitions");
 
-    // Move the tools directory to the root of the repo because that's where the build script
-    // expects it to be, paths get hardcoded into the binaries.
-    let _ = Command::new("mv")
-        .args(["wormhole/tools", "tools"])
-        .output()
-        .expect("failed to execute process");
-
-    // Move the protobuf definitions to the src/network directory, we don't have to do this
-    // but it is more intuitive when debugging.
-    let _ = Command::new("mv")
-        .args([
-            "wormhole/proto/gossip/v1/gossip.proto",
-            "src/network/p2p.proto",
-        ])
-        .output()
-        .expect("failed to execute process");
-
-    // Build the protobuf compiler.
-    let _ = Command::new("./build.sh")
-        .current_dir("tools")
-        .output()
-        .expect("failed to execute process");
-
-    // Make the protobuf compiler executable.
-    let _ = Command::new("chmod")
-        .args(["+x", "tools/bin/*"])
-        .output()
-        .expect("failed to execute process");
-
-    // Generate the protobuf definitions. See buf.gen.yaml to see how we rename the module for our
-    // particular use case.
-    let _ = Command::new("./tools/bin/buf")
-        .args(["generate", "--path", "src"])
-        .output()
-        .expect("failed to execute process");
-
-    // Build the Go library.
-    let mut cmd = Command::new("go");
-    cmd.arg("build")
-        .arg("-buildmode=c-archive")
-        .arg("-o")
-        .arg(out_dir.join("libpythnet.a"))
-        .arg("src/network/p2p.go")
-        .arg("src/network/p2p.pb.go");
-
-    // Tell Rust to link our Go library at compile time.
-    println!("cargo:rustc-link-search=native={out_var}");
-    println!("cargo:rustc-link-lib=static=pythnet");
-
-    #[cfg(target_arch = "aarch64")]
-    println!("cargo:rustc-link-lib=resolv");
-
-    let status = cmd.status().unwrap();
-    assert!(status.success());
+    // We build the resulting protobuf definitions using Rust's prost_build crate, which generates
+    // Rust code from the protobuf definitions.
+    tonic_build::configure()
+        .build_server(false)
+        .compile(
+            &[
+                out_dir.join("proto/spy/v1/spy.proto"),
+                out_dir.join("proto/gossip/v1/gossip.proto"),
+                out_dir.join("proto/node/v1/node.proto"),
+                out_dir.join("proto/publicrpc/v1/publicrpc.proto"),
+            ],
+            &[out_dir.join("proto")],
+        )
+        .expect("failed to compile protobuf definitions");
 }

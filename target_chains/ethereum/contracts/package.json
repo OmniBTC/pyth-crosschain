@@ -1,6 +1,6 @@
 {
   "name": "@pythnetwork/pyth-evm-contract",
-  "version": "1.3.0-alpha",
+  "version": "1.4.0",
   "description": "",
   "private": "true",
   "devDependencies": {
@@ -12,6 +12,7 @@
     "mocha": "^8.2.1",
     "truffle": "^5.7.4",
     "truffle-deploy-registry": "^0.5.1",
+    "truffle-plugin-stdjsonin": "github:mhrsalehi/truffle-plugin-stdjsonin",
     "truffle-plugin-verify": "^0.6.1"
   },
   "scripts": {
@@ -20,12 +21,13 @@
     "migrate": "truffle migrate",
     "receiver-submit-guardian-sets": "truffle exec scripts/receiverSubmitGuardianSetUpgrades.js",
     "verify": "truffle run verify $npm_config_module@$npm_config_contract_address --network $npm_config_network",
-    "install-forge-deps": "forge install foundry-rs/forge-std@2c7cbfc6fbede6d7c9e6b17afe997e3fdfe22fef --no-git --no-commit"
+    "install-forge-deps": "forge install foundry-rs/forge-std@2c7cbfc6fbede6d7c9e6b17afe997e3fdfe22fef --no-git --no-commit",
+    "coverage": "./coverage.sh"
   },
   "author": "",
-  "license": "ISC",
+  "license": "Apache-2.0",
   "dependencies": {
-    "@certusone/wormhole-sdk": "^0.9.9",
+    "@certusone/wormhole-sdk": "^0.9.22",
     "@matterlabs/hardhat-zksync-deploy": "^0.6.2",
     "@matterlabs/hardhat-zksync-solc": "^0.3.14",
     "@nomiclabs/hardhat-etherscan": "^3.1.7",
@@ -34,7 +36,7 @@
     "@openzeppelin/hardhat-upgrades": "^1.22.1",
     "@pythnetwork/pyth-multisig-wh-message-builder": "*",
     "@pythnetwork/pyth-sdk-solidity": "^2.2.0",
-    "@pythnetwork/xc-governance-sdk": "*",
+    "contract_manager": "*",
     "dotenv": "^10.0.0",
     "elliptic": "^6.5.2",
     "ethers": "^5.7.2",
@@ -49,6 +51,7 @@
     "web3": "^1.2.2",
     "web3-eth-abi": "^1.2.2",
     "web3-utils": "^1.2.2",
+    "xc_admin_common": "*",
     "zksync-web3": "^0.13.4"
   }
 }

@@ -2,21 +2,23 @@
   "name": "root",
   "workspaces": [
     "governance/xc_admin/packages/*",
-    "governance/xc_governance_sdk_js",
     "governance/multisig_wh_message_builder",
     "price_pusher",
     "price_service/server",
     "price_service/sdk/js",
     "price_service/client/js",
+    "pythnet/message_buffer",
     "target_chains/aptos/sdk/js",
-    "target_chains/cosmwasm/sdk/js",
     "target_chains/cosmwasm/tools",
+    "target_chains/cosmwasm/deploy-scripts",
     "target_chains/ethereum/contracts",
     "target_chains/ethereum/sdk/js",
     "target_chains/ethereum/sdk/solidity",
     "target_chains/ethereum/examples/oracle_swap/app",
-    "third_party/pyth/p2w-relay",
-    "wormhole_attester/sdk/js"
+    "target_chains/sui/sdk/js",
+    "target_chains/sui/cli",
+    "wormhole_attester/sdk/js",
+    "contract_manager"
   ],
   "dependencies": {
     "pre-commit": "^1.2.2",

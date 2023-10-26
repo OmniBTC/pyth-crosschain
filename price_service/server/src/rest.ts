@@ -1,4 +1,4 @@
-import { HexString } from "@pythnetwork/price-service-sdk";
+import { HexString, Price, PriceFeed } from "@pythnetwork/price-service-sdk";
 import cors from "cors";
 import express, { NextFunction, Request, Response } from "express";
 import { Joi, schema, validate, ValidationError } from "express-validation";
@@ -6,12 +6,9 @@ import { Server } from "http";
 import { StatusCodes } from "http-status-codes";
 import morgan from "morgan";
 import fetch from "node-fetch";
-import {
-  parseBatchPriceAttestation,
-  priceAttestationToPriceFeed,
-} from "@pythnetwork/wormhole-attester-sdk";
+import { parseBatchPriceAttestation } from "@pythnetwork/wormhole-attester-sdk";
 import { removeLeading0x, TimestampInSec } from "./helpers";
-import { createPriceInfo, PriceInfo, PriceStore, VaaConfig } from "./listen";
+import { createPriceInfo, PriceInfo, PriceStore } from "./listen";
 import { logger } from "./logging";
 import { PromClient } from "./promClient";
 import { retry } from "ts-retry-promise";
@@ -21,7 +18,6 @@ import {
   TargetChain,
   validTargetChains,
   defaultTargetChain,
-  VaaEncoding,
   encodeVaaForChain,
 } from "./encoding";
 
@@ -67,6 +63,11 @@ function asyncWrapper(
   };
 }
 
+export type VaaResponse = {
+  publishTime: number;
+  vaa: string;
+};
+
 export class RestAPI {
   private port: number;
   private priceFeedVaaInfo: PriceStore;
@@ -92,12 +93,18 @@ export class RestAPI {
   async getVaaWithDbLookup(
     priceFeedId: string,
     publishTime: TimestampInSec
-  ): Promise<VaaConfig | undefined> {
+  ): Promise<VaaResponse | undefined> {
     // Try to fetch the vaa from the local cache
-    let vaa = this.priceFeedVaaInfo.getVaa(priceFeedId, publishTime);
+    const vaaConfig = this.priceFeedVaaInfo.getVaa(priceFeedId, publishTime);
+    let vaa: VaaResponse | undefined;
 
     // if publishTime is older than cache ttl or vaa is not found, fetch from db
-    if (vaa === undefined && this.dbApiEndpoint && this.dbApiCluster) {
+    if (vaaConfig !== undefined) {
+      vaa = {
+        vaa: vaaConfig.vaa,
+        publishTime: vaaConfig.publishTime,
+      };
+    } else if (vaa === undefined && this.dbApiEndpoint && this.dbApiCluster) {
       const priceFeedWithoutLeading0x = removeLeading0x(priceFeedId);
 
       try {
@@ -125,7 +132,128 @@ export class RestAPI {
     return vaa;
   }
 
-  vaaToPriceInfo(priceFeedId: string, vaa: Buffer): PriceInfo | undefined {
+  // Extract the price info from an Accumulator update. This is a temporary solution until hermes adoption
+  // to maintain backward compatibility when the db migrates to the new update format.
+  static extractPriceInfoFromAccumulatorUpdate(
+    priceFeedId: string,
+    updateData: Buffer
+  ): PriceInfo | undefined {
+    let offset = 0;
+    offset += 4; // magic
+    offset += 1; // major version
+    offset += 1; // minor version
+
+    const trailingHeaderSize = updateData.readUint8(offset);
+    offset += 1 + trailingHeaderSize;
+
+    const updateType = updateData.readUint8(offset);
+    offset += 1;
+
+    // There is a single update type of 0 for now.
+    if (updateType !== 0) {
+      logger.error(`Invalid accumulator update type: ${updateType}`);
+      return undefined;
+    }
+
+    const vaaLength = updateData.readUint16BE(offset);
+    offset += 2;
+
+    const vaaBuffer = updateData.slice(offset, offset + vaaLength);
+    const vaa = parseVaa(vaaBuffer);
+    offset += vaaLength;
+
+    const numUpdates = updateData.readUint8(offset);
+    offset += 1;
+
+    // Iterate through the updates to find the price info with the given id
+    for (let i = 0; i < numUpdates; i++) {
+      const messageLength = updateData.readUint16BE(offset);
+      offset += 2;
+
+      const message = updateData.slice(offset, offset + messageLength);
+      offset += messageLength;
+
+      const proofLength = updateData.readUint8(offset);
+      offset += 1;
+
+      // ignore proofs
+      offset += proofLength;
+
+      // Checket whether the message is a price feed update
+      // from the given price id and if so, extract the price info
+      let messageOffset = 0;
+      const messageType = message.readUint8(messageOffset);
+      messageOffset += 1;
+
+      // MessageType of 0 is a price feed update
+      if (messageType !== 0) {
+        continue;
+      }
+
+      const priceId = message
+        .slice(messageOffset, messageOffset + 32)
+        .toString("hex");
+      messageOffset += 32;
+
+      if (priceId !== priceFeedId) {
+        continue;
+      }
+
+      const price = message.readBigInt64BE(messageOffset);
+      messageOffset += 8;
+      const conf = message.readBigUint64BE(messageOffset);
+      messageOffset += 8;
+      const expo = message.readInt32BE(messageOffset);
+      messageOffset += 4;
+      const publishTime = message.readBigInt64BE(messageOffset);
+      messageOffset += 8;
+      const prevPublishTime = message.readBigInt64BE(messageOffset);
+      messageOffset += 8;
+      const emaPrice = message.readBigInt64BE(messageOffset);
+      messageOffset += 8;
+      const emaConf = message.readBigUint64BE(messageOffset);
+
+      return {
+        priceFeed: new PriceFeed({
+          id: priceFeedId,
+          price: new Price({
+            price: price.toString(),
+            conf: conf.toString(),
+            expo,
+            publishTime: Number(publishTime),
+          }),
+          emaPrice: new Price({
+            price: emaPrice.toString(),
+            conf: emaConf.toString(),
+            expo,
+            publishTime: Number(publishTime),
+          }),
+        }),
+        publishTime: Number(publishTime),
+        vaa: vaaBuffer,
+        seqNum: Number(vaa.sequence),
+        emitterChainId: vaa.emitterChain,
+        // These are not available in the accumulator update format
+        // but are required by the PriceInfo type.
+        attestationTime: Number(publishTime),
+        lastAttestedPublishTime: Number(prevPublishTime),
+        priceServiceReceiveTime: Number(publishTime),
+      };
+    }
+
+    return undefined;
+  }
+
+  static vaaToPriceInfo(
+    priceFeedId: string,
+    vaa: Buffer
+  ): PriceInfo | undefined {
+    // Vaa could be the update data from the db with the Accumulator format.
+    const ACCUMULATOR_MAGIC = "504e4155";
+    if (vaa.slice(0, 4).toString("hex") === ACCUMULATOR_MAGIC) {
+      return RestAPI.extractPriceInfoFromAccumulatorUpdate(priceFeedId, vaa);
+    }
+
     const parsedVaa = parseVaa(vaa);
 
     let batchAttestation;
@@ -443,7 +571,7 @@ export class RestAPI {
           throw RestException.VaaNotFound();
         }
 
-        const priceInfo = this.vaaToPriceInfo(
+        const priceInfo = RestAPI.vaaToPriceInfo(
           priceFeedId,
           Buffer.from(vaa.vaa, "base64")
         );
@@ -503,7 +631,7 @@ export class RestAPI {
     endpoints.push("/api/stale_feeds?threshold=<staleness_threshold_seconds>");
 
     app.get("/ready", (_, res: Response) => {
-      if (this.isReady!()) {
+      if (this.isReady === undefined || this.isReady!()) {
         res.sendStatus(StatusCodes.OK);
       } else {
         res.sendStatus(StatusCodes.SERVICE_UNAVAILABLE);

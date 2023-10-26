@@ -6,7 +6,7 @@ The oracle AMM manages a pool of two tokens and allows a user to trade with the 
 This application has two components. The first component is a smart contract (in the `contract` directory) that manages the pool and implements the trading functionality.
 The second is a frontend application (in the `app` directory) that communicates with the smart contract.
 
-Please see the [Pyth documentation](https://docs.pyth.network/pythnet-price-feeds) for more information about Pyth and how to integrate it into your application.
+Please see the [Pyth documentation](https://docs.pyth.network/documentation/pythnet-price-feeds) for more information about Pyth and how to integrate it into your application.
 
 **Warning** this AMM is intended only as a demonstration of Pyth price feeds and is **not for production use**.
 
@@ -65,19 +65,29 @@ forge inspect OracleSwap abi > ../app/src/abi/OracleSwapAbi.json
 
 ## Frontend Application
 
-All of the commands in this section assume you are in the `app` directory.
-
 By default, the frontend is configured to use the already deployed version of the oracle AMM
 at address [`0x15F9ccA28688F5E6Cbc8B00A8f33e8cE73eD7B02`](https://mumbai.polygonscan.com/address/0x15F9ccA28688F5E6Cbc8B00A8f33e8cE73eD7B02) on Polygon Mumbai.
 This means you can start playing with the application without going through the steps above (Remember to switch your wallet to Mumbai and to claim funds from a faucet to pay for the gas).
 
 ### Build
 
-`npm ci`
+From the root of the pyth-crosschain repository, run:
+
+```
+npm ci
+npx lerna run build
+```
+
+This command will install dependencies for all packages within the typescript monorepo, and also build some
+typescript SDKs that this example depends on.
 
 ### Run
 
+After building, you can start the frontend by navigating to the `app/` directory and running:
+
 `npm run start`
+
+Then navigate your browser to `localhost:3000`.
 
 ### Other configurations:
 

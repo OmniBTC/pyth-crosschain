@@ -1,8 +1,4 @@
-import { Wallet } from '@coral-xyz/anchor'
-import NodeWallet from '@coral-xyz/anchor/dist/cjs/nodewallet'
 import { Tab } from '@headlessui/react'
-import { useAnchorWallet } from '@solana/wallet-adapter-react'
-import { Keypair } from '@solana/web3.js'
 import * as fs from 'fs'
 import type { GetServerSideProps, NextPage } from 'next'
 import { useRouter } from 'next/router'
@@ -17,11 +13,6 @@ import { StatusFilterProvider } from '../contexts/StatusFilterContext'
 import { classNames } from '../utils/classNames'
 
 export const getServerSideProps: GetServerSideProps = async () => {
-  const KEYPAIR_BASE_PATH = process.env.KEYPAIR_BASE_PATH || ''
-  const OPS_WALLET = fs.existsSync(`${KEYPAIR_BASE_PATH}/ops-key`)
-    ? JSON.parse(fs.readFileSync(`${KEYPAIR_BASE_PATH}/ops-key`, 'ascii'))
-    : null
-
   const MAPPINGS_BASE_PATH = process.env.MAPPINGS_BASE_PATH || ''
   const PUBLISHER_PYTHNET_MAPPING_PATH = `${MAPPINGS_BASE_PATH}/publishers-pythnet.json`
   const PUBLISHER_PYTHTEST_MAPPING_PATH = `${MAPPINGS_BASE_PATH}/publishers-pythtest.json`
@@ -51,9 +42,11 @@ export const getServerSideProps: GetServerSideProps = async () => {
       )
     : {}
 
+  const proposerServerUrl =
+    process.env.PROPOSER_SERVER_URL || 'http://localhost:4000'
   return {
     props: {
-      OPS_WALLET,
+      proposerServerUrl,
       publisherKeyToNameMapping,
       multisigSignerKeyToNameMapping,
     },
@@ -81,22 +74,16 @@ const TAB_INFO = {
 const DEFAULT_TAB = 'general'
 
 const Home: NextPage<{
-  OPS_WALLET: number[] | null
   publisherKeyToNameMapping: Record<string, Record<string, string>>
   multisigSignerKeyToNameMapping: Record<string, string>
+  proposerServerUrl: string
 }> = ({
-  OPS_WALLET,
   publisherKeyToNameMapping,
   multisigSignerKeyToNameMapping,
+  proposerServerUrl,
 }) => {
   const [currentTabIndex, setCurrentTabIndex] = useState(0)
   const tabInfoArray = Object.values(TAB_INFO)
-  const anchorWallet = useAnchorWallet()
-  const wallet = OPS_WALLET
-    ? (new NodeWallet(
-        Keypair.fromSecretKey(Uint8Array.from(OPS_WALLET))
-      ) as Wallet)
-    : (anchorWallet as Wallet)
 
   const router = useRouter()
 
@@ -130,8 +117,11 @@ const Home: NextPage<{
 
   return (
     <Layout>
-      <PythContextProvider>
-        <MultisigContextProvider wallet={wallet}>
+      <PythContextProvider
+        publisherKeyToNameMapping={publisherKeyToNameMapping}
+        multisigSignerKeyToNameMapping={multisigSignerKeyToNameMapping}
+      >
+        <MultisigContextProvider>
           <div className="container relative pt-16 md:pt-20">
             <div className="py-8 md:py-16">
               <Tab.Group
@@ -157,20 +147,17 @@ const Home: NextPage<{
             </div>
           </div>
           {tabInfoArray[currentTabIndex].queryString ===
-          TAB_INFO.General.queryString ? (
-            <General />
-          ) : tabInfoArray[currentTabIndex].queryString ===
-            TAB_INFO.UpdatePermissions.queryString ? (
-            <UpdatePermissions />
-          ) : tabInfoArray[currentTabIndex].queryString ===
-            TAB_INFO.Proposals.queryString ? (
+            TAB_INFO.General.queryString && (
+            <General proposerServerUrl={proposerServerUrl} />
+          )}
+          {tabInfoArray[currentTabIndex].queryString ===
+            TAB_INFO.UpdatePermissions.queryString && <UpdatePermissions />}
+          {tabInfoArray[currentTabIndex].queryString ===
+            TAB_INFO.Proposals.queryString && (
             <StatusFilterProvider>
-              <Proposals
-                publisherKeyToNameMapping={publisherKeyToNameMapping}
-                multisigSignerKeyToNameMapping={multisigSignerKeyToNameMapping}
-              />
+              <Proposals />
             </StatusFilterProvider>
-          ) : null}
+          )}
         </MultisigContextProvider>
       </PythContextProvider>
     </Layout>

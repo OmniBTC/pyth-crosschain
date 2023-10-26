@@ -7,13 +7,17 @@ with pkgs; mkShell {
     clang
     llvmPackages.libclang
     nettle
-    openssl
-    pkgconfig
+    openssl_1_1
+    pkg-config
+    iconv
+    protobuf
+    go
     rustup
-    systemd
+    curl
   ];
 
   shellHook = ''
     export LIBCLANG_PATH="${llvmPackages.libclang.lib}/lib";
+    export CPATH="${darwin.Libsystem}/include";
   '';
 }

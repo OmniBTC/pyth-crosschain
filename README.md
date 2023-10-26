@@ -5,45 +5,41 @@ Pyth Crosschain.
 
 Within this monorepo you will find the following subprojects:
 
-## Wormhole Attester
-
-> wormhole_attester
-
-The main Pyth implementation currently exists as an [on-chain contract][] on
-Pythnet, a separate instance of the Solana blockchain. In order to expose
-these prices cross-chain, the Wormhole Attester contract acts as a sender for Pyth prices. At regular intervals the Pyth
-contract will observe the current Pyth price for selected products, and produce
-an attestation which is then relayed over Wormhole to be consumed by the
-various receiver contracts.
-
-[on-chain contract]: https://github.com/pyth-network/pyth-client
-
 ## Target Chains
 
-> target_chains
+> [target_chains](./target_chains/)
 
 This directory contains on-chain contracts and SDKs for all of the various
 blockchain runtimes that Pyth supports. Each subdirectory corresponds to a
 blockchain runtime. Inside each subdirectory, there are subfolders for
 contracts, SDKs, and examples.
 
-## Price Service
+## Hermes
 
-> price_service
+> [hermes](./hermes/)
 
-The Price Service is an off-chain service which constantly observes the
-Wormhole network watching for price attestations emitted from the Pyth
-contract. It exposes all observed attestations via a public API over HTTPS/WSS
-which can be consumed by client-side applications that wish to use Pyth pricing
-data.
+Hermes is an off-chain service which constantly observes Pythnet and the
+Wormhole network watching for price updates emitted from the Pyth contract. It
+exposes all observed attestations via a public API over HTTPS/WSS which can be
+consumed by client-side applications that wish to use Pyth pricing data.
 
-The `client` subdirectory provides an SDK for interacting with the price service.
+The [`price_service/client`](./price_service/client/) directory provides an SDK for interacting with Hermes.
 However, most users will interact with the price service via a chain-specific SDK
 
 For a guide on utilising this service in your project, see the chain-specific SDK
 and examples for your blockchain runtime in the `target_chains` directory.
 
 ## Development
+
+### Pull requests
+
+Use the following format for naming the pull requests:
+
+[component] PR description
+
+For example:
+
+[hermes] Add storage tests
 
 ### Releases
 
@@ -52,8 +48,8 @@ To perform a release, follow these steps:
 
 1. Update the version number in the `package.json` file for the package(s) you wish to release. Please follow [Semantic Versioning](https://semver.org/) for package versions.
 2. Submit a PR with the changes and merge them in to main.
-3. Create a new release in github with a tag of the form `pyth-js-v<number>`. You can simply increment the version number each time -- it doesn't affect any of the published information.
-4. When this release is published, it will automatically trigger a CI workflow to publish the updated packages to NPM.
+3. Create a new tag `pyth-js-v<number>` and push to github. You can simply increment the version number each time -- it doesn't affect any of the published information.
+4. Pushing the tag automatically triggers a CI workflow to publish the updated packages to NPM.
 
 If you have a javascript package that shouldn't be published, simply add `"private": "true"` to the `package.json` file
 and it will be excluded from the publishing workflow. If you are creating a new public javascript package, you should add

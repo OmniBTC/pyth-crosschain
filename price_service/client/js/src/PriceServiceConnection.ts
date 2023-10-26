@@ -13,6 +13,8 @@ export type PriceFeedRequestConfig = {
   verbose?: boolean;
   /* Optional binary to include the price feeds binary update data */
   binary?: boolean;
+  /* Optional config for the websocket subscription to receive out of order updates */
+  allowOutOfOrder?: boolean;
 };
 
 export type PriceServiceConnectionConfig = {
@@ -38,6 +40,7 @@ type ClientMessage = {
   ids: HexString[];
   verbose?: boolean;
   binary?: boolean;
+  allow_out_of_order?: boolean;
 };
 
 type ServerResponse = {
@@ -62,7 +65,7 @@ export class PriceServiceConnection {
   private wsClient: undefined | ResilientWebSocket;
   private wsEndpoint: undefined | string;
 
-  private logger: undefined | Logger;
+  private logger: Logger;
 
   private priceFeedRequestConfig: PriceFeedRequestConfig;
 
@@ -92,13 +95,35 @@ export class PriceServiceConnection {
     this.priceFeedRequestConfig = {
       binary: config?.priceFeedRequestConfig?.binary,
       verbose: config?.priceFeedRequestConfig?.verbose ?? config?.verbose,
+      allowOutOfOrder: config?.priceFeedRequestConfig?.allowOutOfOrder,
     };
 
     this.priceFeedCallbacks = new Map();
 
-    this.logger = config?.logger;
+    // Default logger is console for only warnings and errors.
+    this.logger = config?.logger || {
+      trace: () => {},
+      debug: () => {},
+      info: () => {},
+      warn: console.warn,
+      error: console.error,
+    };
+
     this.onWsError = (error: Error) => {
-      this.logger?.error(error);
+      this.logger.error(error);
+
+      // Exit the process if it is running in node.
+      if (
+        typeof process !== "undefined" &&
+        typeof process.exit === "function"
+      ) {
+        this.logger.error("Halting the process due to the websocket error");
+        process.exit(1);
+      } else {
+        this.logger.error(
+          "Cannot halt process. Please handle the websocket error."
+        );
+      }
     };
 
     this.wsEndpoint = makeWebsocketUrl(endpoint);
@@ -175,6 +200,32 @@ export class PriceServiceConnection {
   }
 
   /**
+   * Fetch the PriceFeed of the given price id that is published since the given publish time.
+   * This will throw an error if the given publish time is in the future, or if the publish time
+   * is old and the price service endpoint does not have a db backend for historical requests.
+   * This will throw an axios error if there is a network problem or the price service returns a non-ok response (e.g: Invalid price id)
+   *
+   * @param priceId Hex-encoded price id.
+   * @param publishTime Epoch timestamp in seconds.
+   * @returns PriceFeed
+   */
+  async getPriceFeed(
+    priceId: HexString,
+    publishTime: EpochTimeStamp
+  ): Promise<PriceFeed> {
+    const response = await this.httpClient.get("/api/get_price_feed", {
+      params: {
+        id: priceId,
+        publish_time: publishTime,
+        verbose: this.priceFeedRequestConfig.verbose,
+        binary: this.priceFeedRequestConfig.binary,
+      },
+    });
+
+    return PriceFeed.fromJson(response.data);
+  }
+
+  /**
    * Fetch the list of available price feed ids.
    * This will throw an axios error if there is a network problem or the price service returns a non-ok response.
    *
@@ -222,6 +273,7 @@ export class PriceServiceConnection {
       type: "subscribe",
       verbose: this.priceFeedRequestConfig.verbose,
       binary: this.priceFeedRequestConfig.binary,
+      allow_out_of_order: this.priceFeedRequestConfig.allowOutOfOrder,
     };
 
     await this.wsClient?.send(JSON.stringify(message));
@@ -305,30 +357,31 @@ export class PriceServiceConnection {
           type: "subscribe",
           verbose: this.priceFeedRequestConfig.verbose,
           binary: this.priceFeedRequestConfig.binary,
+          allow_out_of_order: this.priceFeedRequestConfig.allowOutOfOrder,
         };
 
-        this.logger?.info("Resubscribing to existing price feeds.");
+        this.logger.info("Resubscribing to existing price feeds.");
         this.wsClient?.send(JSON.stringify(message));
       }
     };
 
     this.wsClient.onMessage = (data: WebSocket.Data) => {
-      this.logger?.info(`Received message ${data.toString()}`);
+      this.logger.info(`Received message ${data.toString()}`);
 
       let message: ServerMessage;
 
       try {
         message = JSON.parse(data.toString()) as ServerMessage;
       } catch (e: any) {
-        this.logger?.error(`Error parsing message ${data.toString()} as JSON.`);
-        this.logger?.error(e);
+        this.logger.error(`Error parsing message ${data.toString()} as JSON.`);
+        this.logger.error(e);
         this.onWsError(e);
         return;
       }
 
       if (message.type === "response") {
         if (message.status === "error") {
-          this.logger?.error(
+          this.logger.error(
             `Error response from the websocket server ${message.error}.`
           );
           this.onWsError(new Error(message.error));
@@ -338,10 +391,10 @@ export class PriceServiceConnection {
         try {
           priceFeed = PriceFeed.fromJson(message.price_feed);
         } catch (e: any) {
-          this.logger?.error(
+          this.logger.error(
             `Error parsing price feeds from message ${data.toString()}.`
           );
-          this.logger?.error(e);
+          this.logger.error(e);
           this.onWsError(e);
           return;
         }
@@ -352,7 +405,7 @@ export class PriceServiceConnection {
           }
         }
       } else {
-        this.logger?.warn(
+        this.logger.warn(
           `Ignoring unsupported server response ${data.toString()}.`
         );
       }

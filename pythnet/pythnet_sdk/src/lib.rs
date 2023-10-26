@@ -1,16 +1,17 @@
 pub mod accumulators;
+pub mod error;
 pub mod hashers;
-pub mod payload;
+pub mod messages;
+pub mod wire;
 pub mod wormhole;
 
 pub(crate) type Pubkey = [u8; 32];
-pub(crate) type PriceId = Pubkey;
 
 /// Official Message Buffer Program Id
-/// pubkey!("Vbmv1jt4vyuqBZcpYPpnVhrqVe5e6ZPb6JxDcffRHUM");
+/// pubkey!("7Vbmv1jt4vyuqBZcpYPpnVhrqVe5e6ZPb6JxDcffRHUM");
 pub const MESSAGE_BUFFER_PID: Pubkey = [
-    7, 83, 149, 9, 30, 102, 77, 194, 50, 151, 133, 40, 118, 10, 93, 152, 174, 44, 244, 56, 27, 47,
-    234, 218, 173, 153, 254, 48, 102, 178, 128, 18,
+    96, 121, 180, 39, 141, 35, 152, 85, 128, 70, 147, 124, 128, 196, 115, 241, 86, 159, 207, 148,
+    39, 234, 137, 86, 178, 4, 238, 48, 102, 178, 128, 18,
 ];
 
 /// Pubkey::find_program_address(&[b"emitter"], &sysvar::accumulator::id());
@@ -31,7 +32,7 @@ pub mod pythnet {
     ];
 
     /// Pubkey::find_program_address(&[b"Sequence", &emitter_pda_key.to_bytes()], &WORMHOLE_PID);
-    /// pubkey!("HiqU8jiyUoFbRjf4YFAKRFWq5NZykEYC6mWhXXnoszJR");
+    /// pubkey!("8MuVR15V86sSELdpW4UYTyx7WTXRARF1Bj7GJHgTJP3K");
     pub const ACCUMULATOR_SEQUENCE_ADDR: Pubkey = [
         109, 92, 198, 114, 10, 119, 5, 31, 13, 197, 193, 195, 132, 17, 12, 3, 77, 111, 158, 247,
         194, 137, 236, 50, 8, 185, 1, 61, 85, 94, 54, 198,
@@ -79,6 +80,13 @@ pub(crate) mod tests {
             200, 74, 124, 198, 226, 194, 215, 62, 43, 98, 207, 184, 167, 181, 175, 174, 254, 192,
             204, 37, 26, 45, 137, 21, 180, 83, 228, 241, 198, 180, 129, 67,
         ];
+        assert_eq!(
+            pythtest_wormhole_pid_bytes,
+            pythtest_wormhole_pid.to_bytes()
+        );
+
+        let expected_pythtest_accumulator_sequence_addr =
+            pubkey!("Ao4tQp1ouW9w73CE34npzSDjgPG5FGz8KmoSauzCwuh7");
         let (pythtest_accumulator_sequence_address, _) = Pubkey::find_program_address(
             &[b"Sequence", accumulator_emitter_address.as_ref()],
             &pythtest_wormhole_pid,
@@ -90,8 +98,8 @@ pub(crate) mod tests {
         ];
 
         assert_eq!(
-            pythtest_wormhole_pid_bytes,
-            pythtest_wormhole_pid.to_bytes()
+            expected_pythtest_accumulator_sequence_addr,
+            pythtest_accumulator_sequence_address
         );
 
         assert_eq!(
@@ -99,7 +107,7 @@ pub(crate) mod tests {
             pythtest_accumulator_sequence_address.to_bytes()
         );
 
-        let message_buffer_program = pubkey!("Vbmv1jt4vyuqBZcpYPpnVhrqVe5e6ZPb6JxDcffRHUM");
+        let message_buffer_program = pubkey!("7Vbmv1jt4vyuqBZcpYPpnVhrqVe5e6ZPb6JxDcffRHUM");
         assert_eq!(MESSAGE_BUFFER_PID, message_buffer_program.to_bytes());
     }
 }
