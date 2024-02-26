@@ -14,5 +14,5 @@ subdir = "sui/wormhole"
 rev = "pyth-testnet"
 
 [addresses]
-pyth = "0xf7114cc10266d90c0c9e4b84455bddf29b40bd78fe56832c7ac98682c3daa95b"
+pyth = "0xe76d8a37d4132278a7a752183e90e04890b9e7d0f6657eadb68821609a2a56a3"
 pyth_wormhole = "0xcc029e2810f17f9f43f52262f40026a71fbdca40ed3803ad2884994361910b7e"
