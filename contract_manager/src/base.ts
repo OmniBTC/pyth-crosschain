@@ -8,13 +8,20 @@ export interface TxResult {
 
 export type DeploymentType = "stable" | "beta";
 export type PrivateKey = string & { __type: "PrivateKey" };
+
 function checkIsPrivateKey(key: string): asserts key is PrivateKey {
   if (Buffer.from(key, "hex").length !== 32)
     throw new Error("Invalid private key, must be 64 hex chars");
 }
+
 export function toPrivateKey(key: string): PrivateKey {
   checkIsPrivateKey(key);
   return key;
+}
+
+export function toDeploymentType(type: string): DeploymentType {
+  if (type === "stable" || type === "beta") return type;
+  throw new Error(`Invalid deployment type ${type}`);
 }
 
 export type KeyValueConfig = Record<string, string | number | boolean>;
@@ -50,7 +57,7 @@ export interface PriceFeed {
   emaPrice: Price;
 }
 
-export abstract class Contract extends Storable {
+export abstract class PriceFeedContract extends Storable {
   /**
    * Returns the time period in seconds that stale data is considered valid for.
    */

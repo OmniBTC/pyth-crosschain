@@ -19,6 +19,7 @@ mod latest_vaas;
 mod live;
 mod price_feed_ids;
 mod ready;
+mod v2;
 
 pub use {
     get_price_feed::*,
@@ -30,9 +31,14 @@ pub use {
     live::*,
     price_feed_ids::*,
     ready::*,
+    v2::{
+        latest_price_updates::*,
+        timestamp_price_updates::*,
+    },
 };
 
 pub enum RestError {
+    BenchmarkPriceNotUnique,
     UpdateDataNotFound,
     CcipUpdateDataNotFound,
     InvalidCCIPInput,
@@ -42,6 +48,9 @@ pub enum RestError {
 impl IntoResponse for RestError {
     fn into_response(self) -> Response {
         match self {
+            RestError::BenchmarkPriceNotUnique => {
+                (StatusCode::NOT_FOUND, "Benchmark price is not unique").into_response()
+            }
             RestError::UpdateDataNotFound => {
                 (StatusCode::NOT_FOUND, "Update data not found").into_response()
             }

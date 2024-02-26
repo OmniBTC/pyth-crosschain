@@ -1,12 +1,69 @@
 import Web3 from "web3";
 import PythInterfaceAbi from "@pythnetwork/pyth-sdk-solidity/abis/IPyth.json";
-import { Contract, PrivateKey } from "../base";
+import EntropyAbi from "@pythnetwork/entropy-sdk-solidity/abis/IEntropy.json";
+import { PriceFeedContract, PrivateKey, Storable } from "../base";
 import { Chain, EvmChain } from "../chains";
-import { DataSource } from "xc_admin_common";
+import { DataSource, EvmExecute } from "xc_admin_common";
 import { WormholeContract } from "./wormhole";
 
 // Just to make sure tx gas limit is enough
 const GAS_ESTIMATE_MULTIPLIER = 2;
+const EXTENDED_ENTROPY_ABI = [
+  {
+    inputs: [],
+    name: "acceptOwnership",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "acceptAdmin",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "owner",
+    outputs: [
+      {
+        internalType: "address",
+        name: "",
+        type: "address",
+      },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "pendingOwner",
+    outputs: [
+      {
+        internalType: "address",
+        name: "",
+        type: "address",
+      },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "version",
+    outputs: [
+      {
+        internalType: "string",
+        name: "",
+        type: "string",
+      },
+    ],
+    stateMutability: "pure",
+    type: "function",
+  },
+  ...EntropyAbi,
+] as any; // eslint-disable-line  @typescript-eslint/no-explicit-any
 const EXTENDED_PYTH_ABI = [
   {
     inputs: [],
@@ -139,7 +196,6 @@ const EXTENDED_PYTH_ABI = [
   },
   ...PythInterfaceAbi,
 ] as any; // eslint-disable-line  @typescript-eslint/no-explicit-any
-
 const WORMHOLE_ABI = [
   {
     inputs: [],
@@ -149,6 +205,19 @@ const WORMHOLE_ABI = [
         internalType: "uint32",
         name: "",
         type: "uint32",
+      },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "chainId",
+    outputs: [
+      {
+        internalType: "uint16",
+        name: "",
+        type: "uint16",
       },
     ],
     stateMutability: "view",
@@ -212,6 +281,79 @@ const WORMHOLE_ABI = [
     type: "function",
   },
 ] as any; // eslint-disable-line  @typescript-eslint/no-explicit-any
+const EXECUTOR_ABI = [
+  {
+    inputs: [
+      {
+        internalType: "bytes",
+        name: "encodedVm",
+        type: "bytes",
+      },
+    ],
+    name: "execute",
+    outputs: [
+      {
+        internalType: "bytes",
+        name: "response",
+        type: "bytes",
+      },
+    ],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "getOwnerChainId",
+    outputs: [
+      {
+        internalType: "uint64",
+        name: "",
+        type: "uint64",
+      },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "getOwnerEmitterAddress",
+    outputs: [
+      {
+        internalType: "bytes32",
+        name: "",
+        type: "bytes32",
+      },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "getLastExecutedSequence",
+    outputs: [
+      {
+        internalType: "uint64",
+        name: "",
+        type: "uint64",
+      },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "owner",
+    outputs: [
+      {
+        internalType: "address",
+        name: "",
+        type: "address",
+      },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
+] as any; // eslint-disable-line  @typescript-eslint/no-explicit-any
 export class WormholeEvmContract extends WormholeContract {
   constructor(public chain: EvmChain, public address: string) {
     super();
@@ -226,6 +368,11 @@ export class WormholeEvmContract extends WormholeContract {
     return Number(
       await wormholeContract.methods.getCurrentGuardianSetIndex().call()
     );
+  }
+
+  async getChainId(): Promise<number> {
+    const wormholeContract = this.getContract();
+    return Number(await wormholeContract.methods.chainId().call());
   }
 
   /**
@@ -249,8 +396,11 @@ export class WormholeEvmContract extends WormholeContract {
     );
     const gasEstiamte = await transactionObject.estimateGas({
       from: address,
-      gas: 100000000,
+      gas: 15000000,
     });
+    // Some networks like Filecoin do not support the normal transaction type and need a type 2 transaction.
+    // To send a type 2 transaction, remove the ``gasPrice`` field and add the `type` field with the value
+    // `0x2` to the transaction configuration parameters.
     const result = await transactionObject.send({
       from: address,
       gas: gasEstiamte * GAS_ESTIMATE_MULTIPLIER,
@@ -260,8 +410,213 @@ export class WormholeEvmContract extends WormholeContract {
   }
 }
 
-export class EvmContract extends Contract {
-  static type = "EvmContract";
+interface EntropyProviderInfo {
+  feeInWei: string;
+  accruedFeesInWei: string;
+  originalCommitment: string;
+  originalCommitmentSequenceNumber: string;
+  commitmentMetadata: string;
+  uri: string;
+  endSequenceNumber: string;
+  sequenceNumber: string;
+  currentCommitment: string;
+  currentCommitmentSequenceNumber: string;
+}
+
+export class EvmEntropyContract extends Storable {
+  static type = "EvmEntropyContract";
+
+  constructor(public chain: EvmChain, public address: string) {
+    super();
+  }
+
+  getId(): string {
+    return `${this.chain.getId()}_${this.address}`;
+  }
+
+  getChain(): EvmChain {
+    return this.chain;
+  }
+
+  getType(): string {
+    return EvmEntropyContract.type;
+  }
+
+  async getVersion(): Promise<string> {
+    const contract = this.getContract();
+    return contract.methods.version().call();
+  }
+
+  static fromJson(
+    chain: Chain,
+    parsed: { type: string; address: string }
+  ): EvmEntropyContract {
+    if (parsed.type !== EvmEntropyContract.type)
+      throw new Error("Invalid type");
+    if (!(chain instanceof EvmChain))
+      throw new Error(`Wrong chain type ${chain}`);
+    return new EvmEntropyContract(chain, parsed.address);
+  }
+
+  // Generate a payload for the given executor address and calldata.
+  // `executor` and `calldata` should be hex strings.
+  generateExecutorPayload(
+    executor: string,
+    callAddress: string,
+    calldata: string
+  ) {
+    return new EvmExecute(
+      this.chain.wormholeChainName,
+      executor.replace("0x", ""),
+      callAddress.replace("0x", ""),
+      0n,
+      Buffer.from(calldata.replace("0x", ""), "hex")
+    ).encode();
+  }
+
+  // Generates a payload for the newAdmin to call acceptAdmin on the entropy contracts
+  generateAcceptAdminPayload(newAdmin: string): Buffer {
+    const contract = this.getContract();
+    const data = contract.methods.acceptAdmin().encodeABI();
+    return this.generateExecutorPayload(newAdmin, this.address, data);
+  }
+
+  // Generates a payload for newOwner to call acceptOwnership on the entropy contracts
+  generateAcceptOwnershipPayload(newOwner: string): Buffer {
+    const contract = this.getContract();
+    const data = contract.methods.acceptOwnership().encodeABI();
+    return this.generateExecutorPayload(newOwner, this.address, data);
+  }
+
+  // Generates a payload to upgrade the executor contract, the owner of entropy contracts
+  async generateUpgradeExecutorContractsPayload(
+    newImplementation: string
+  ): Promise<Buffer> {
+    // Executor contract is the owner of entropy contract
+    const executorAddr = await this.getOwner();
+    const web3 = new Web3(this.chain.getRpcUrl());
+    const executor = new web3.eth.Contract(EXECUTOR_ABI, executorAddr);
+    const data = executor.methods.upgradeTo(newImplementation).encodeABI();
+    return this.generateExecutorPayload(executorAddr, executorAddr, data);
+  }
+
+  async getOwner(): Promise<string> {
+    const contract = this.getContract();
+    return contract.methods.owner().call();
+  }
+
+  async getExecutorContract(): Promise<EvmExecutorContract> {
+    const owner = await this.getOwner();
+    return new EvmExecutorContract(this.chain, owner);
+  }
+
+  async getPendingOwner(): Promise<string> {
+    const contract = this.getContract();
+    return contract.methods.pendingOwner().call();
+  }
+
+  toJson() {
+    return {
+      chain: this.chain.getId(),
+      address: this.address,
+      type: EvmEntropyContract.type,
+    };
+  }
+
+  getContract() {
+    const web3 = new Web3(this.chain.getRpcUrl());
+    return new web3.eth.Contract(EXTENDED_ENTROPY_ABI, this.address);
+  }
+
+  async getDefaultProvider(): Promise<string> {
+    const contract = this.getContract();
+    return await contract.methods.getDefaultProvider().call();
+  }
+
+  async getProviderInfo(address: string): Promise<EntropyProviderInfo> {
+    const contract = this.getContract();
+    const info: EntropyProviderInfo = await contract.methods
+      .getProviderInfo(address)
+      .call();
+    return {
+      ...info,
+      uri: Web3.utils.toAscii(info.uri),
+    };
+  }
+}
+
+export class EvmExecutorContract {
+  constructor(public chain: EvmChain, public address: string) {}
+
+  getId(): string {
+    return `${this.chain.getId()}_${this.address}`;
+  }
+
+  async getWormholeContract(): Promise<WormholeEvmContract> {
+    const web3 = new Web3(this.chain.getRpcUrl());
+    //Unfortunately, there is no public method to get the wormhole address
+    //Found 251 by using `forge build --extra-output storageLayout` and finding the slot for the wormhole variable.
+    let address = await web3.eth.getStorageAt(this.address, 251);
+    address = "0x" + address.slice(26);
+    return new WormholeEvmContract(this.chain, address);
+  }
+
+  getContract() {
+    const web3 = new Web3(this.chain.getRpcUrl());
+    return new web3.eth.Contract(EXECUTOR_ABI, this.address);
+  }
+
+  async getLastExecutedGovernanceSequence() {
+    return await this.getContract().methods.getLastExecutedSequence().call();
+  }
+
+  async getGovernanceDataSource(): Promise<DataSource> {
+    const executorContract = this.getContract();
+    const ownerEmitterAddress = await executorContract.methods
+      .getOwnerEmitterAddress()
+      .call();
+    const ownerEmitterChainid = await executorContract.methods
+      .getOwnerChainId()
+      .call();
+    return {
+      emitterChain: Number(ownerEmitterChainid),
+      emitterAddress: ownerEmitterAddress.replace("0x", ""),
+    };
+  }
+
+  /**
+   * Returns the owner of the executor contract, this should always be the contract address itself
+   */
+  async getOwner(): Promise<string> {
+    const contract = this.getContract();
+    return contract.methods.owner().call();
+  }
+
+  async executeGovernanceInstruction(
+    senderPrivateKey: PrivateKey,
+    vaa: Buffer
+  ) {
+    const web3 = new Web3(this.chain.getRpcUrl());
+    const { address } = web3.eth.accounts.wallet.add(senderPrivateKey);
+    const executorContract = new web3.eth.Contract(EXECUTOR_ABI, this.address);
+    const transactionObject = executorContract.methods.execute(
+      "0x" + vaa.toString("hex")
+    );
+    const gasEstimate = await transactionObject.estimateGas({
+      from: address,
+      gas: 100000000,
+    });
+    const result = await transactionObject.send({
+      from: address,
+      gas: gasEstimate * GAS_ESTIMATE_MULTIPLIER,
+      gasPrice: await this.chain.getGasPrice(),
+    });
+    return { id: result.transactionHash, info: result };
+  }
+}
+
+export class EvmPriceFeedContract extends PriceFeedContract {
+  static type = "EvmPriceFeedContract";
 
   constructor(public chain: EvmChain, public address: string) {
     super();
@@ -270,11 +625,12 @@ export class EvmContract extends Contract {
   static fromJson(
     chain: Chain,
     parsed: { type: string; address: string }
-  ): EvmContract {
-    if (parsed.type !== EvmContract.type) throw new Error("Invalid type");
+  ): EvmPriceFeedContract {
+    if (parsed.type !== EvmPriceFeedContract.type)
+      throw new Error("Invalid type");
     if (!(chain instanceof EvmChain))
       throw new Error(`Wrong chain type ${chain}`);
-    return new EvmContract(chain, parsed.address);
+    return new EvmPriceFeedContract(chain, parsed.address);
   }
 
   getId(): string {
@@ -282,7 +638,7 @@ export class EvmContract extends Contract {
   }
 
   getType(): string {
-    return EvmContract.type;
+    return EvmPriceFeedContract.type;
   }
 
   async getVersion(): Promise<string> {
@@ -431,15 +787,15 @@ export class EvmContract extends Contract {
       .call();
     const transactionObject =
       pythContract.methods.updatePriceFeeds(priceFeedUpdateData);
-    const gasEstiamte = await transactionObject.estimateGas({
+    const gasEstimate = await transactionObject.estimateGas({
       from: address,
-      gas: 100000000,
+      gas: 15000000,
       value: updateFee,
     });
     const result = await transactionObject.send({
       from: address,
       value: updateFee,
-      gas: gasEstiamte * GAS_ESTIMATE_MULTIPLIER,
+      gas: gasEstimate * GAS_ESTIMATE_MULTIPLIER,
       gasPrice: await this.chain.getGasPrice(),
     });
     return { id: result.transactionHash, info: result };
@@ -457,7 +813,7 @@ export class EvmContract extends Contract {
     );
     const gasEstiamte = await transactionObject.estimateGas({
       from: address,
-      gas: 100000000,
+      gas: 15000000,
     });
     const result = await transactionObject.send({
       from: address,
@@ -475,7 +831,7 @@ export class EvmContract extends Contract {
     return {
       chain: this.chain.getId(),
       address: this.address,
-      type: EvmContract.type,
+      type: EvmPriceFeedContract.type,
     };
   }
 }

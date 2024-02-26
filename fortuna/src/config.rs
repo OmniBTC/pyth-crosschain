@@ -1,5 +1,8 @@
 use {
-    crate::api::ChainId,
+    crate::{
+        api::ChainId,
+        chain::reader::BlockNumber,
+    },
     anyhow::{
         anyhow,
         Result,
@@ -24,6 +27,7 @@ pub use {
     register_provider::RegisterProviderOptions,
     request_randomness::RequestRandomnessOptions,
     run::RunOptions,
+    setup_provider::SetupProviderOptions,
 };
 
 mod generate;
@@ -31,6 +35,7 @@ mod get_request;
 mod register_provider;
 mod request_randomness;
 mod run;
+mod setup_provider;
 
 const DEFAULT_RPC_ADDR: &str = "127.0.0.1:34000";
 const DEFAULT_HTTP_ADDR: &str = "http://127.0.0.1:34000";
@@ -47,6 +52,10 @@ pub enum Options {
 
     /// Register a new provider with the Pyth Random oracle.
     RegisterProvider(RegisterProviderOptions),
+
+    /// Set up the provider for all the provided chains.
+    /// It registers, re-registers, or updates provider config on chain.
+    SetupProvider(SetupProviderOptions),
 
     /// Request a random number from the contract.
     RequestRandomness(RequestRandomnessOptions),
@@ -73,17 +82,23 @@ pub struct ConfigOptions {
 #[command(next_help_heading = "Randomness Options")]
 #[group(id = "Randomness")]
 pub struct RandomnessOptions {
-    /// A secret used for generating new hash chains. A 64-char hex string.
+    /// Path to file containing a secret which is a 64-char hex string.
+    /// The secret is used for generating new hash chains
     #[arg(long = "secret")]
     #[arg(env = "FORTUNA_SECRET")]
-    #[arg(default_value = "0000000000000000000000000000000000000000000000000000000000000000")]
-    pub secret: String,
+    pub secret_file: String,
 
     /// The length of the hash chain to generate.
     #[arg(long = "chain-length")]
     #[arg(env = "FORTUNA_CHAIN_LENGTH")]
-    #[arg(default_value = "32")]
+    #[arg(default_value = "10000")]
     pub chain_length: u64,
+}
+
+impl RandomnessOptions {
+    pub fn load_secret(&self) -> Result<String> {
+        return Ok((fs::read_to_string(&self.secret_file))?);
+    }
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -115,4 +130,11 @@ pub struct EthereumConfig {
 
     /// Address of a Pyth Randomness contract to interact with.
     pub contract_addr: Address,
+
+    /// How many blocks to wait before revealing the random number.
+    pub reveal_delay_blocks: BlockNumber,
+
+    /// Use the legacy transaction format (for networks without EIP 1559)
+    #[serde(default)]
+    pub legacy_tx: bool,
 }

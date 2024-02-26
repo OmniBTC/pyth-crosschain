@@ -8,15 +8,15 @@ use {
 };
 
 pub mod api;
+pub mod chain;
 pub mod command;
 pub mod config;
-pub mod ethereum;
 pub mod state;
 
 // Server TODO list:
 // - Tests
 // - Reduce memory requirements for storing hash chains to increase scalability
-// - Name things nicely (service name, API resource names)
+// - Name things nicely (API resource names)
 // - README
 // - Choose data formats for binary data
 #[tokio::main]
@@ -39,6 +39,7 @@ async fn main() -> Result<()> {
         config::Options::Generate(opts) => command::generate(&opts).await,
         config::Options::Run(opts) => command::run(&opts).await,
         config::Options::RegisterProvider(opts) => command::register_provider(&opts).await,
+        config::Options::SetupProvider(opts) => command::setup_provider(&opts).await,
         config::Options::RequestRandomness(opts) => command::request_randomness(&opts).await,
     }
 }

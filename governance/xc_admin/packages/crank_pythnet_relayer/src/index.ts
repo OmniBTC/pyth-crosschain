@@ -40,9 +40,12 @@ const OFFSET: number = Number(process.env.OFFSET ?? "-1");
 const COMMITMENT: Commitment =
   (process.env.COMMITMENT as Commitment) ?? "confirmed";
 
+const GUARDIAN_RPC = process.env.GUARDIAN_RPC;
+const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL;
+
 async function run() {
   const provider = new AnchorProvider(
-    new Connection(getPythClusterApiUrl(CLUSTER), COMMITMENT),
+    new Connection(SOLANA_RPC_URL ?? getPythClusterApiUrl(CLUSTER), COMMITMENT),
     new NodeWallet(KEYPAIR),
     {
       commitment: COMMITMENT,
@@ -65,7 +68,7 @@ async function run() {
     ? (claimRecord.sequence as BN).toNumber()
     : -1;
   lastSequenceNumber = Math.max(lastSequenceNumber, OFFSET);
-  const wormholeApi = WORMHOLE_API_ENDPOINT[CLUSTER];
+  const wormholeApi = GUARDIAN_RPC ?? WORMHOLE_API_ENDPOINT[CLUSTER];
   const productAccountToSymbol: { [key: string]: string } = {};
   while (true) {
     lastSequenceNumber += 1;

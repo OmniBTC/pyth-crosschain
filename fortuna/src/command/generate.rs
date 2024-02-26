@@ -1,11 +1,11 @@
 use {
     crate::{
         api::GetRandomValueResponse,
+        chain::ethereum::SignablePythContract,
         config::{
             Config,
             GenerateOptions,
         },
-        ethereum::SignablePythContract,
     },
     anyhow::Result,
     base64::{
@@ -45,10 +45,10 @@ pub async fn generate(opts: &GenerateOptions) -> Result<()> {
     .await?;
 
     tracing::info!(
-        response = base64_standard_engine.encode(resp.value),
+        response = base64_standard_engine.encode(resp.value.data()),
         "Retrieved the provider's random value.",
     );
-    let provider_randomness = resp.value;
+    let provider_randomness = resp.value.data();
 
     // Submit the provider's and our values to the contract to reveal the random number.
     let random_value = contract

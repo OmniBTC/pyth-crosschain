@@ -1,7 +1,9 @@
 [workspace]
 members = [
     "programs/*",
-    "cli/"
+    "cli/",
+    "program_simulator/",
+    "pyth_solana_receiver_state/"
 ]
 
 [profile.release]
@@ -12,3 +14,8 @@ codegen-units = 1
 opt-level = 3
 incremental = false
 codegen-units = 1
+
+[workspace.dependencies]
+wormhole-core-bridge-solana = {git = "https://github.com/wormhole-foundation/wormhole", branch = "wen/solana-rewrite"}
+wormhole-sdk = { git = "https://github.com/wormhole-foundation/wormhole", tag = "rust-sdk-2024-01-25" }
+serde_wormhole = { git = "https://github.com/wormhole-foundation/wormhole", tag = "rust-sdk-2024-01-25" }

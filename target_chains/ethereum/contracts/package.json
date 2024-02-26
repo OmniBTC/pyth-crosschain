@@ -21,7 +21,7 @@
     "migrate": "truffle migrate",
     "receiver-submit-guardian-sets": "truffle exec scripts/receiverSubmitGuardianSetUpgrades.js",
     "verify": "truffle run verify $npm_config_module@$npm_config_contract_address --network $npm_config_network",
-    "install-forge-deps": "forge install foundry-rs/forge-std@2c7cbfc6fbede6d7c9e6b17afe997e3fdfe22fef --no-git --no-commit",
+    "install-forge-deps": "forge install foundry-rs/forge-std@v1.7.6 --no-git --no-commit",
     "coverage": "./coverage.sh"
   },
   "author": "",
@@ -36,6 +36,7 @@
     "@openzeppelin/hardhat-upgrades": "^1.22.1",
     "@pythnetwork/pyth-multisig-wh-message-builder": "*",
     "@pythnetwork/pyth-sdk-solidity": "^2.2.0",
+    "@pythnetwork/entropy-sdk-solidity": "*",
     "contract_manager": "*",
     "dotenv": "^10.0.0",
     "elliptic": "^6.5.2",

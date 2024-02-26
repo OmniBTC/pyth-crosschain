@@ -21,6 +21,7 @@ import {
   WORMHOLE_ADDRESS,
   PRICE_FEED_OPS_KEY,
   getMessageBufferAddressForPrice,
+  getMaximumNumberOfPublishers,
 } from 'xc_admin_common'
 import { ClusterContext } from '../../contexts/ClusterContext'
 import { useMultisigContext } from '../../contexts/MultisigContext'
@@ -43,7 +44,7 @@ const General = ({ proposerServerUrl }: { proposerServerUrl: string }) => {
   const isRemote: boolean = isRemoteCluster(cluster) // Move to multisig context
   const multisigCluster: Cluster | 'localnet' = getMultisigCluster(cluster) // Move to multisig context
   const wormholeAddress = WORMHOLE_ADDRESS[multisigCluster] // Move to multisig context
-  const { isLoading: isMultisigLoading, proposeSquads } = useMultisigContext()
+  const { isLoading: isMultisigLoading, squads } = useMultisigContext()
   const { rawConfig, dataIsLoading, connection } = usePythContext()
   const { connected } = useWallet()
   const [pythProgramClient, setPythProgramClient] =
@@ -125,12 +126,16 @@ const General = ({ proposerServerUrl }: { proposerServerUrl: string }) => {
             metadata: {
               ...product.metadata,
             },
-            priceAccounts: product.priceAccounts.map((p) => ({
-              address: p.address.toBase58(),
-              publishers: p.publishers.map((p) => p.toBase58()),
-              expo: p.expo,
-              minPub: p.minPub,
-            })),
+            priceAccounts: product.priceAccounts.map((p) => {
+              return {
+                address: p.address.toBase58(),
+                publishers: p.publishers
+                  .map((p) => p.toBase58())
+                  .slice(0, getMaximumNumberOfPublishers(cluster)),
+                expo: p.expo,
+                minPub: p.minPub,
+              }
+            }),
           }
           // these fields are immutable and should not be updated
           delete symbolToData[product.metadata.symbol].metadata.symbol
@@ -263,10 +268,16 @@ const General = ({ proposerServerUrl }: { proposerServerUrl: string }) => {
       }
     })
 
-    // check that no price account has more than 32 publishers
+    // check that no price account has more than the maximum number of publishers
     Object.keys(jsonParsed).forEach((symbol) => {
-      if (jsonParsed[symbol].priceAccounts[0].publishers.length > 32) {
-        toast.error(`${symbol} has more than 32 publishers.`)
+      const maximumNumberOfPublishers = getMaximumNumberOfPublishers(cluster)
+      if (
+        jsonParsed[symbol].priceAccounts[0].publishers.length >
+        maximumNumberOfPublishers
+      ) {
+        toast.error(
+          `${symbol} has more than ${maximumNumberOfPublishers} publishers.`
+        )
         isValid = false
       }
     })
@@ -275,15 +286,10 @@ const General = ({ proposerServerUrl }: { proposerServerUrl: string }) => {
   }
 
   const handleSendProposalButtonClick = async () => {
-    if (
-      pythProgramClient &&
-      dataChanges &&
-      !isMultisigLoading &&
-      proposeSquads
-    ) {
+    if (pythProgramClient && dataChanges && !isMultisigLoading && squads) {
       const instructions: TransactionInstruction[] = []
       for (const symbol of Object.keys(dataChanges)) {
-        const multisigAuthority = proposeSquads.getAuthorityPDA(
+        const multisigAuthority = squads.getAuthorityPDA(
           PRICE_FEED_MULTISIG[getMultisigCluster(cluster)],
           1
         )
@@ -782,11 +788,11 @@ const General = ({ proposerServerUrl }: { proposerServerUrl: string }) => {
             <button
               className="action-btn text-base"
               onClick={handleSendProposalButtonClick}
-              disabled={isSendProposalButtonLoading || !proposeSquads}
+              disabled={isSendProposalButtonLoading || !squads}
             >
               {isSendProposalButtonLoading ? <Spinner /> : 'Send Proposal'}
             </button>
-            {!proposeSquads && <div>Please connect your wallet</div>}
+            {!squads && <div>Please connect your wallet</div>}
           </>
         )}
       </>
@@ -795,10 +801,10 @@ const General = ({ proposerServerUrl }: { proposerServerUrl: string }) => {
 
   // create anchor wallet when connected
   useEffect(() => {
-    if (connected && proposeSquads) {
+    if (connected && squads) {
       const provider = new AnchorProvider(
         connection,
-        proposeSquads.wallet,
+        squads.wallet,
         AnchorProvider.defaultOptions()
       )
       setPythProgramClient(
@@ -815,7 +821,7 @@ const General = ({ proposerServerUrl }: { proposerServerUrl: string }) => {
         )
       }
     }
-  }, [connection, connected, cluster, proposeSquads])
+  }, [connection, connected, cluster, squads])
 
   return (
     <div className="relative">
@@ -840,13 +846,13 @@ const General = ({ proposerServerUrl }: { proposerServerUrl: string }) => {
           <PermissionDepermissionKey
             isPermission={true}
             pythProgramClient={pythProgramClient}
-            squads={proposeSquads}
+            squads={squads}
             proposerServerUrl={proposerServerUrl}
           />
           <PermissionDepermissionKey
             isPermission={false}
             pythProgramClient={pythProgramClient}
-            squads={proposeSquads}
+            squads={squads}
             proposerServerUrl={proposerServerUrl}
           />
         </div>

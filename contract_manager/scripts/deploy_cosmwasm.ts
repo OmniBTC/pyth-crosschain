@@ -1,8 +1,10 @@
 import yargs from "yargs";
 import { hideBin } from "yargs/helpers";
 import { CosmWasmChain } from "../src/chains";
-import { CosmWasmContract } from "../src/contracts/cosmwasm";
+import { CosmWasmPriceFeedContract } from "../src/contracts/cosmwasm";
 import { DefaultStore } from "../src/store";
+
+import { COMMON_DEPLOY_OPTIONS } from "./common";
 
 const parser = yargs(hideBin(process.argv))
   .scriptName("deploy_cosmwasm.ts")
@@ -15,11 +17,7 @@ const parser = yargs(hideBin(process.argv))
       demandOption: true,
       desc: "Path to the artifact .wasm file",
     },
-    "private-key": {
-      type: "string",
-      demandOption: true,
-      desc: "Private key to use for the deployment",
-    },
+    "private-key": COMMON_DEPLOY_OPTIONS["private-key"],
     chain: {
       type: "string",
       demandOption: true,
@@ -36,7 +34,7 @@ async function main() {
   const argv = await parser.argv;
   const { code, wormholeContract } = argv;
   console.log(
-    await CosmWasmContract.deploy(
+    await CosmWasmPriceFeedContract.deploy(
       DefaultStore.chains[argv.chain] as CosmWasmChain,
       wormholeContract,
       argv["private-key"],

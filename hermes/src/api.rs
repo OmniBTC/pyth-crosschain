@@ -27,7 +27,7 @@ use {
 mod doc_examples;
 mod metrics_middleware;
 mod rest;
-mod types;
+pub mod types;
 mod ws;
 
 #[derive(Clone)]
@@ -121,6 +121,8 @@ pub async fn run(opts: RunOptions, state: ApiState) -> Result<()> {
             rest::latest_price_feeds,
             rest::latest_vaas,
             rest::price_feed_ids,
+            rest::latest_price_updates,
+            rest::timestamp_price_updates,
         ),
         components(
             schemas(
@@ -132,6 +134,11 @@ pub async fn run(opts: RunOptions, state: ApiState) -> Result<()> {
                 types::RpcPriceFeed,
                 types::RpcPriceFeedMetadata,
                 types::RpcPriceIdentifier,
+                types::EncodingType,
+                types::PriceUpdate,
+                types::BinaryPriceUpdate,
+                types::ParsedPriceUpdate,
+                types::RpcPriceFeedMetadataV2,
             )
         ),
         tags(
@@ -152,6 +159,11 @@ pub async fn run(opts: RunOptions, state: ApiState) -> Result<()> {
         .route("/api/latest_price_feeds", get(rest::latest_price_feeds))
         .route("/api/latest_vaas", get(rest::latest_vaas))
         .route("/api/price_feed_ids", get(rest::price_feed_ids))
+        .route("/v2/updates/price/latest", get(rest::latest_price_updates))
+        .route(
+            "/v2/updates/price/:publish_time",
+            get(rest::timestamp_price_updates),
+        )
         .route("/live", get(rest::live))
         .route("/ready", get(rest::ready))
         .route("/ws", get(ws::ws_route_handler))

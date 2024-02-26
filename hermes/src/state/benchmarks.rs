@@ -1,25 +1,25 @@
 //! This module communicates with Pyth Benchmarks, an API for historical price feeds and their updates.
 
 use {
-    crate::aggregate::{
-        PriceFeedUpdate,
-        PriceFeedsWithUpdateData,
-        UnixTimestamp,
+    crate::{
+        aggregate::{
+            PriceFeedsWithUpdateData,
+            UnixTimestamp,
+        },
+        api::types::PriceUpdate,
     },
     anyhow::Result,
     base64::{
         engine::general_purpose::STANDARD as base64_standard_engine,
         Engine as _,
     },
-    pyth_sdk::{
-        PriceFeed,
-        PriceIdentifier,
-    },
+    pyth_sdk::PriceIdentifier,
+    serde::Deserialize,
 };
 
 const BENCHMARKS_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-#[derive(serde::Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone)]
 enum BlobEncoding {
     #[serde(rename = "base64")]
     Base64,
@@ -27,16 +27,10 @@ enum BlobEncoding {
     Hex,
 }
 
-#[derive(serde::Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone)]
 struct BinaryBlob {
     pub encoding: BlobEncoding,
     pub data:     Vec<String>,
-}
-
-#[derive(serde::Deserialize, Debug, Clone)]
-struct BenchmarkUpdates {
-    pub parsed: Vec<PriceFeed>,
-    pub binary: BinaryBlob,
 }
 
 impl TryFrom<BinaryBlob> for Vec<Vec<u8>> {
@@ -53,26 +47,6 @@ impl TryFrom<BinaryBlob> for Vec<Vec<u8>> {
                 })
             })
             .collect::<Result<_>>()
-    }
-}
-
-impl TryFrom<BenchmarkUpdates> for PriceFeedsWithUpdateData {
-    type Error = anyhow::Error;
-    fn try_from(benchmark_updates: BenchmarkUpdates) -> Result<Self> {
-        Ok(PriceFeedsWithUpdateData {
-            price_feeds: benchmark_updates
-                .parsed
-                .into_iter()
-                .map(|price_feed| PriceFeedUpdate {
-                    price_feed,
-                    slot: None,
-                    received_at: None,
-                    update_data: None,
-                    prev_publish_time: None, // TODO: Set this field when Benchmarks API supports it.
-                })
-                .collect::<Vec<_>>(),
-            update_data: benchmark_updates.binary.try_into()?,
-        })
     }
 }
 
@@ -112,7 +86,14 @@ impl Benchmarks for crate::state::State {
 
         let response = request.send().await?;
 
-        let benchmark_updates: BenchmarkUpdates = response.json().await?;
-        benchmark_updates.try_into()
+        if response.status() != reqwest::StatusCode::OK {
+            return Err(anyhow::anyhow!(format!(
+                "Price update for price ids {:?} with publish time {} not found in benchmarks. Status code: {}, message: {}",
+                price_ids, publish_time, response.status(), response.text().await?
+            )));
+        }
+
+        let price_update: PriceUpdate = response.json().await?;
+        price_update.try_into()
     }
 }

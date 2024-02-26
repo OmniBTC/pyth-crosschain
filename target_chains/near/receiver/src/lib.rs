@@ -27,7 +27,26 @@ use {
         Promise,
         StorageUsage,
     },
-    pyth_wormhole_attester_sdk::BatchPriceAttestation,
+    pyth_wormhole_attester_sdk::{
+        BatchPriceAttestation,
+        P2W_MAGIC,
+    },
+    pythnet_sdk::{
+        accumulators::merkle::MerkleRoot,
+        hashers::keccak256_160::Keccak160,
+        messages::Message,
+        wire::{
+            from_slice,
+            v1::{
+                AccumulatorUpdateData,
+                Proof,
+                WormholeMessage,
+                WormholePayload,
+                PYTHNET_ACCUMULATOR_UPDATE_MAGIC,
+            },
+        },
+    },
+    serde_wormhole::RawMessage,
     state::{
         Price,
         PriceFeed,
@@ -35,11 +54,15 @@ use {
         Source,
         Vaa,
     },
-    std::io::Cursor,
+    std::io::{
+        Cursor,
+        Read,
+    },
 };
 
 pub mod error;
 pub mod ext;
+#[cfg(not(feature = "library"))]
 pub mod governance;
 pub mod state;
 pub mod tests;
@@ -50,10 +73,15 @@ enum StorageKeys {
     Prices,
 }
 
+/// Alias to document time unit Pyth expects data to be in.
+type Seconds = u64;
+
 /// The `State` contains all persisted state for the contract. This includes runtime configuration.
 ///
 /// There is no valid Default state for this contract, so we derive PanicOnDefault to force
-/// deployment using one of the #[init] functions in the impl below.
+/// deployment using one of the #[init] functions in the impl below. We also want to disable
+/// this whole definition if the "library" feature flag is on.
+#[cfg(not(feature = "library"))]
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
 pub struct Pyth {
@@ -89,13 +117,13 @@ pub struct Pyth {
     update_fee: u128,
 }
 
+#[cfg(not(feature = "library"))]
 #[near_bindgen]
 impl Pyth {
     #[init]
     #[allow(clippy::new_without_default)]
     pub fn new(
         wormhole: AccountId,
-        codehash: [u8; 32],
         initial_source: Source,
         gov_source: Source,
         update_fee: U128,
@@ -112,82 +140,196 @@ impl Pyth {
             gov_source,
             sources,
             wormhole,
-            codehash,
+            codehash: Default::default(),
             update_fee: update_fee.into(),
         }
     }
 
+    #[private]
     #[init(ignore_state)]
     pub fn migrate() -> Self {
-        let state: Self = env::state_read().expect("Failed to read state");
+        // This currently deserializes and produces the same state, I.E migration is a no-op to the
+        // current state.
+        //
+        // In the case where we want to actually migrate to a new state, we can do this by defining
+        // the old State struct here and then deserializing into that, then migrating into the new
+        // state, example code for the future reader:
+        //
+        // ```rust
+        // pub fn migrate() -> Self {
+        //     pub struct OldPyth {
+        //         sources:                        UnorderedSet<Source>,
+        //         gov_source:                     Source,
+        //         executed_governance_vaa:        u64,
+        //         executed_governance_change_vaa: u64,
+        //         prices:                         UnorderedMap<PriceIdentifier, PriceFeed>,
+        //         wormhole:                       AccountId,
+        //         codehash:                       [u8; 32],
+        //         stale_threshold:                Duration,
+        //         update_fee:                     u128,
+        //     }
+        //
+        //     // Construct new Pyth State from old, perform any migrations needed.
+        //     let old: OldPyth = env::state_read().expect("Failed to read state");
+        //
+        //     Self {
+        //        sources:    old.sources,
+        //        gov_source: old.gov_source,
+        //        ...
+        //     }
+        // }
+        // ```
+        let mut state: Self = env::state_read().expect("Failed to read state");
+        state.codehash = Default::default();
         state
     }
 
     /// Instruction for processing VAA's relayed via Wormhole.
     ///
     /// Note that VAA verification requires calling Wormhole so processing of the VAA itself is
-    /// done in a callback handler, see `process_vaa_callback`.
+    /// done in a callback handler, see `process_vaa_callback`. The `data` parameter can be
+    /// retrieved from Hermes using the price feed APIs.
     #[payable]
     #[handle_result]
-    pub fn update_price_feed(&mut self, vaa_hex: String) -> Result<(), Error> {
-        // We Verify the VAA is coming from a trusted source chain before attempting to verify
-        // VAA signatures. Avoids a cross-contract call early.
-        let vaa = hex::decode(&vaa_hex).map_err(|_| Error::InvalidHex)?;
-        let vaa = serde_wormhole::from_slice_with_payload::<wormhole::Vaa<()>>(&vaa);
-        let vaa = vaa.map_err(|_| Error::InvalidVaa)?;
-        let (vaa, _rest) = vaa;
+    pub fn update_price_feeds(&mut self, data: String) -> Result<(), Error> {
+        // Attempt to deserialize the Payload based on header.
+        let bytes = &*hex::decode(data.clone()).map_err(|_| Error::InvalidHex)?;
+        let cursor = &mut Cursor::new(bytes);
+        let mut header = [0u8; 4];
+        cursor.clone().read_exact(&mut header).unwrap();
 
-        // Convert to local VAA type to catch APi changes.
-        let vaa = Vaa::from(vaa);
+        // Handle Accumulator style Price Updates.
+        if &header == PYTHNET_ACCUMULATOR_UPDATE_MAGIC {
+            let update_data =
+                AccumulatorUpdateData::try_from_slice(&cursor.clone().into_inner()).unwrap();
 
-        if !self.sources.contains(&Source {
-            emitter: vaa.emitter_address,
-            chain:   vaa.emitter_chain,
-        }) {
-            return Err(Error::UnknownSource);
+            match update_data.proof {
+                Proof::WormholeMerkle { vaa, .. } => {
+                    self.verify_encoded_vaa_source(vaa.as_ref())?;
+                    let vaa_hex = hex::encode(vaa.as_ref());
+                    ext_wormhole::ext(self.wormhole.clone())
+                        .with_static_gas(Gas(30_000_000_000_000))
+                        .verify_vaa(vaa_hex.clone())
+                        .then(
+                            Self::ext(env::current_account_id())
+                                .with_static_gas(Gas(30_000_000_000_000))
+                                .with_attached_deposit(env::attached_deposit())
+                                .verify_wormhole_merkle_callback(
+                                    env::predecessor_account_id(),
+                                    data,
+                                ),
+                        )
+                        .then(
+                            Self::ext(env::current_account_id())
+                                .with_static_gas(Gas(30_000_000_000_000))
+                                .refund_vaa(env::predecessor_account_id(), env::attached_deposit()),
+                        );
+                }
+            };
+        } else {
+            // We Verify the VAA is coming from a trusted source chain before attempting to verify
+            // VAA signatures. Avoids a cross-contract call early.
+            self.verify_encoded_vaa_source(bytes)?;
+
+            // Verify VAA and refund the caller in case of failure.
+            ext_wormhole::ext(self.wormhole.clone())
+                .with_static_gas(Gas(30_000_000_000_000))
+                .verify_vaa(data.clone())
+                .then(
+                    Self::ext(env::current_account_id())
+                        .with_static_gas(Gas(30_000_000_000_000))
+                        .with_attached_deposit(env::attached_deposit())
+                        .verify_wormhole_batch_callback(env::predecessor_account_id(), data),
+                )
+                .then(
+                    Self::ext(env::current_account_id())
+                        .with_static_gas(Gas(30_000_000_000_000))
+                        .refund_vaa(env::predecessor_account_id(), env::attached_deposit()),
+                );
         }
 
-        // Verify VAA and refund the caller in case of failure.
-        ext_wormhole::ext(self.wormhole.clone())
-            .with_static_gas(Gas(30_000_000_000_000))
-            .verify_vaa(vaa_hex.clone())
-            .then(
-                Self::ext(env::current_account_id())
-                    .with_static_gas(Gas(30_000_000_000_000))
-                    .with_attached_deposit(env::attached_deposit())
-                    .verify_vaa_callback(env::predecessor_account_id(), vaa_hex),
-            )
-            .then(
-                Self::ext(env::current_account_id())
-                    .with_static_gas(Gas(30_000_000_000_000))
-                    .refund_vaa(env::predecessor_account_id(), env::attached_deposit()),
-            );
-
         Ok(())
-    }
-
-    /// Return the deposit required to update a price feed. This is the upper limit for an update
-    /// call and any remaining deposit not consumed for storage will be refunded.
-    #[allow(unused_variables)]
-    pub fn get_update_fee_estimate(&self, vaa: String) -> U128 {
-        let byte_cost = env::storage_byte_cost();
-        let data_cost = byte_cost * std::mem::size_of::<PriceFeed>() as u128;
-
-        // The const multiplications here are to provide additional headway for any unexpected data
-        // costs in NEAR's storage calculations.
-        //
-        // 5 is the upper limit for PriceFeed amount in a single update.
-        // 4 is the value obtained through testing for headway.
-        (5u128 * 4u128 * data_cost + self.update_fee).into()
     }
 
     #[payable]
     #[private]
     #[handle_result]
-    pub fn verify_vaa_callback(
+    pub fn verify_wormhole_batch_callback(
         &mut self,
         account_id: AccountId,
         vaa: String,
+        #[callback_result] _result: Result<u32, near_sdk::PromiseError>,
+    ) -> Result<(), Error> {
+        if !is_promise_success() {
+            return Err(Error::VaaVerificationFailed);
+        }
+
+        // Get Storage Usage before execution, subtracting the fee from the deposit has the effect
+        // forces the caller to add the required fee to the deposit. The protocol defines the fee
+        // as a u128, but storage is a u64, so we need to check that the fee does not overflow the
+        // storage cost as well.
+        let storage = env::storage_usage();
+
+        // Deserialize VAA, note that we already deserialized and verified the VAA in `process_vaa`
+        // at this point so we only care about the `rest` component which contains bytes we can
+        // deserialize into an Action.
+        let vaa = hex::decode(&vaa).unwrap();
+        let vaa: wormhole_sdk::Vaa<&RawMessage> = serde_wormhole::from_slice(&vaa).unwrap();
+
+        // Attempt to deserialize the Payload based on header.
+        let bytes = &mut Cursor::new(vaa.payload);
+        let mut header = [0u8; 4];
+        bytes.clone().read_exact(&mut header).unwrap();
+
+        // Check the header is a P2W header and return if not.
+        if &header != P2W_MAGIC {
+            return Err(Error::InvalidVaa);
+        }
+
+        // Verify the PriceAttestation's are new enough, and if so, store them.
+        let mut count_updates = 0;
+        let batch = BatchPriceAttestation::deserialize(bytes).unwrap();
+        for price_attestation in &batch.price_attestations {
+            if self.update_price_feed_if_new(PriceFeed::from(price_attestation)) {
+                count_updates += 1;
+            }
+        }
+
+        log!(
+            r#"
+            {{
+                "standard": "pyth",
+                "version":  "1.0",
+                "event":    "BatchAttest",
+                "data":     {{
+                    "count": {},
+                    "diffs": {},
+                    "costs": {},
+                }}
+            }}
+            "#,
+            count_updates,
+            env::storage_usage() - storage,
+            env::storage_byte_cost() * (env::storage_usage() - storage) as u128,
+        );
+
+        // Refund storage difference to `account_id` after storage execution.
+        Self::refund_storage_usage(
+            account_id,
+            storage,
+            env::storage_usage(),
+            env::attached_deposit(),
+            Some(self.update_fee),
+        )
+    }
+
+    #[payable]
+    #[private]
+    #[handle_result]
+    pub fn verify_wormhole_merkle_callback(
+        &mut self,
+        account_id: AccountId,
+        data: String,
         #[callback_result] _result: Result<u32, near_sdk::PromiseError>,
     ) -> Result<(), Error> {
         if !is_promise_success() {
@@ -207,22 +349,40 @@ impl Pyth {
             .ok_or(Error::InsufficientDeposit)
             .and_then(|s| u64::try_from(s).map_err(|_| Error::ArithmeticOverflow))?;
 
-        // Deserialize VAA, note that we already deserialized and verified the VAA in `process_vaa`
-        // at this point so we only care about the `rest` component which contains bytes we can
-        // deserialize into an Action.
-        let vaa = hex::decode(&vaa).unwrap();
-        let (_, rest): (wormhole::Vaa<()>, _) =
-            serde_wormhole::from_slice_with_payload(&vaa).unwrap();
-
-        // Attempt to deserialize the Batch of Price Attestations.
-        let bytes = &mut Cursor::new(rest);
-        let batch = BatchPriceAttestation::deserialize(bytes).unwrap();
-
-        // Verify the PriceAttestation's are new enough, and if so, store them.
         let mut count_updates = 0;
-        for price_attestation in &batch.price_attestations {
-            if self.update_price_feed_if_new(PriceFeed::from(price_attestation)) {
-                count_updates += 1;
+        let bytes = &*hex::decode(data.clone()).map_err(|_| Error::InvalidHex)?;
+        let cursor = &mut Cursor::new(bytes);
+        let update_data =
+            AccumulatorUpdateData::try_from_slice(&cursor.clone().into_inner()).unwrap();
+
+        match update_data.proof {
+            Proof::WormholeMerkle { vaa, updates } => {
+                let vaa: wormhole_sdk::Vaa<&RawMessage> =
+                    serde_wormhole::from_slice(vaa.as_ref()).unwrap();
+                let message = WormholeMessage::try_from_bytes(vaa.payload)
+                    .map_err(|_| Error::InvalidWormholeMessage)?;
+                let root: MerkleRoot<Keccak160> = MerkleRoot::new(match message.payload {
+                    WormholePayload::Merkle(merkle_root) => merkle_root.root,
+                });
+
+                for update in updates {
+                    let message_vec = Vec::from(update.message);
+                    if !root.check(update.proof, &message_vec) {
+                        return Err(Error::InvalidMerkleProof)?;
+                    }
+
+                    let msg = from_slice::<byteorder::BE, Message>(&message_vec)
+                        .map_err(|_| Error::InvalidAccumulatorMessage)?;
+
+                    match msg {
+                        Message::PriceFeedMessage(price_feed_message) => {
+                            if self.update_price_feed_if_new(PriceFeed::from(&price_feed_message)) {
+                                count_updates += 1;
+                            }
+                        }
+                        _ => return Err(Error::InvalidAccumulatorMessageType)?,
+                    }
+                }
             }
         }
 
@@ -231,26 +391,61 @@ impl Pyth {
             {{
                 "standard": "pyth",
                 "version":  "1.0",
-                "event":    "BatchAttest",
+                "event":    "AccumulatorUpdates",
                 "data":     {{
                     "count": {},
                     "diffs": {},
                     "costs": {},
                 }}
             }}
-        "#,
+            "#,
             count_updates,
             env::storage_usage() - storage,
             env::storage_byte_cost() * (env::storage_usage() - storage) as u128,
         );
 
         // Refund storage difference to `account_id` after storage execution.
-        self.refund_storage_usage(
+        Self::refund_storage_usage(
             account_id,
             storage,
             env::storage_usage(),
             env::attached_deposit(),
+            Some(self.update_fee),
         )
+    }
+
+    /// Return the deposit required to update a price feed. This is the upper limit for an update
+    /// call and any remaining deposit not consumed for storage will be refunded.
+    #[allow(unused_variables)]
+    pub fn get_update_fee_estimate(&self, data: String) -> U128 {
+        let byte_cost = env::storage_byte_cost();
+        let data_cost = byte_cost * std::mem::size_of::<PriceFeed>() as u128;
+
+        // If the data is an Accumulator style update, we should count he number of updates being
+        // calculated in the fee.
+        let bytes = hex::decode(data).unwrap();
+        let cursor = &mut Cursor::new(bytes);
+        let mut header = [0u8; 4];
+        let mut total_updates = 0u128;
+        cursor.clone().read_exact(&mut header).unwrap();
+        if &header == PYTHNET_ACCUMULATOR_UPDATE_MAGIC {
+            let update_data =
+                AccumulatorUpdateData::try_from_slice(&cursor.clone().into_inner()).unwrap();
+            match update_data.proof {
+                Proof::WormholeMerkle { vaa: _, updates } => {
+                    total_updates += updates.len() as u128;
+                }
+            }
+        } else {
+            total_updates = 1;
+        }
+
+        // The const multiplications here are to provide additional headway for any unexpected data
+        // costs in NEAR's storage calculations.
+        //
+        // 5 is the upper limit for PriceFeed amount in a single update.
+        // 4 is the value obtained through testing for headway.
+        (5u128 * 4u128 * data_cost + self.update_fee * total_updates).into()
     }
 
     /// Read the list of accepted `Source` chains for a price attestation.
@@ -296,15 +491,19 @@ impl Pyth {
 
     /// Get the latest available price cached for the given price identifier, if that price is
     /// no older than the given age.
-    pub fn get_price_no_older_than(&self, price_id: PriceIdentifier, age: u64) -> Option<Price> {
+    pub fn get_price_no_older_than(
+        &self,
+        price_id: PriceIdentifier,
+        age: Seconds,
+    ) -> Option<Price> {
         self.prices.get(&price_id).and_then(|feed| {
             let block_timestamp = env::block_timestamp() / 1_000_000_000;
-            let price_timestamp = feed.price.timestamp;
+            let price_timestamp = feed.price.publish_time;
 
             // - If Price older than STALENESS_THRESHOLD, set status to Unknown.
             // - If Price newer than now by more than STALENESS_THRESHOLD, set status to Unknown.
             // - Any other price around the current time is considered valid.
-            if u64::abs_diff(block_timestamp, price_timestamp) > age {
+            if u64::abs_diff(block_timestamp, price_timestamp.try_into().unwrap()) > age {
                 return None;
             }
 
@@ -326,16 +525,16 @@ impl Pyth {
     pub fn get_ema_price_no_older_than(
         &self,
         price_id: PriceIdentifier,
-        age: u64,
+        age: Seconds,
     ) -> Option<Price> {
         self.prices.get(&price_id).and_then(|feed| {
-            let block_timestamp = env::block_timestamp();
-            let price_timestamp = feed.ema_price.timestamp;
+            let block_timestamp = env::block_timestamp() / 1_000_000_000;
+            let price_timestamp = feed.ema_price.publish_time;
 
             // - If Price older than STALENESS_THRESHOLD, set status to Unknown.
             // - If Price newer than now by more than STALENESS_THRESHOLD, set status to Unknown.
             // - Any other price around the current time is considered valid.
-            if u64::abs_diff(block_timestamp, price_timestamp) > age {
+            if u64::abs_diff(block_timestamp, price_timestamp.try_into().unwrap()) > age {
                 return None;
             }
 
@@ -347,14 +546,32 @@ impl Pyth {
 /// This second `impl Pyth` block contains only private methods that are called internally that
 /// have no transaction semantics associated with them. Note that these do not need `#[private]`
 /// annotations as they are already uncallable.
+#[cfg(not(feature = "library"))]
 impl Pyth {
+    /// Verify a VAA source from a serialized VAA.
+    fn verify_encoded_vaa_source(&self, vaa: &[u8]) -> Result<(), Error> {
+        let vaa: wormhole_sdk::Vaa<&RawMessage> = serde_wormhole::from_slice(vaa).unwrap();
+
+        // Convert to local VAA type to catch API changes.
+        let vaa: Vaa<&RawMessage> = Vaa::from(vaa);
+
+        if !self.sources.contains(&Source {
+            emitter: vaa.emitter_address,
+            chain:   vaa.emitter_chain,
+        }) {
+            return Err(Error::UnknownSource(vaa.emitter_address));
+        }
+
+        Ok(())
+    }
+
     /// Updates the Price Feed only if it is newer than the current one. This function never fails
     /// and will either update in-place or not update at all. The return value indicates whether
     /// the update was performed or not.
     fn update_price_feed_if_new(&mut self, price_feed: PriceFeed) -> bool {
         match self.prices.get(&price_feed.id) {
             Some(stored_price_feed) => {
-                let update = price_feed.price.timestamp > stored_price_feed.price.timestamp;
+                let update = price_feed.price.publish_time > stored_price_feed.price.publish_time;
                 update.then(|| self.prices.insert(&price_feed.id, &price_feed));
                 update
             }
@@ -366,18 +583,22 @@ impl Pyth {
         }
     }
 
-    /// Checks storage usage invariants and additionally refunds the caller if they overpay.
+    /// Checks storage usage invariants and additionally refunds the caller if they overpay. This
+    /// method can optionally charge a fee to the caller which is removed from their deposit during
+    /// refund.
     fn refund_storage_usage(
-        &self,
-        refunder: AccountId,
+        recipient: AccountId,
         before: StorageUsage,
         after: StorageUsage,
         deposit: Balance,
+        additional_fee: Option<Balance>,
     ) -> Result<(), Error> {
+        let fee = additional_fee.unwrap_or(0);
+
         if let Some(diff) = after.checked_sub(before) {
             // Handle storage increases if checked_sub succeeds.
             let cost = Balance::from(diff);
-            let cost = cost * env::storage_byte_cost();
+            let cost = (cost * env::storage_byte_cost()) + fee;
 
             // If the cost is higher than the deposit we bail.
             if cost > deposit {
@@ -386,19 +607,22 @@ impl Pyth {
 
             // Otherwise we refund whatever is left over.
             if deposit - cost > 0 {
-                Promise::new(refunder).transfer(cost);
+                Promise::new(recipient).transfer(deposit - cost);
             }
         } else {
-            // Handle storage decrease if checked_sub fails. We know storage used now is <=
+            // If checked_sub fails we have a storage decrease, we want to refund them the cost of
+            // the amount reduced, as well the original deposit they sent.
             let refund = Balance::from(before - after);
             let refund = refund * env::storage_byte_cost();
-            Promise::new(refunder).transfer(refund);
+            let refund = refund + deposit - fee;
+            Promise::new(recipient).transfer(refund);
         }
 
         Ok(())
     }
 }
 
+#[cfg(not(feature = "library"))]
 #[no_mangle]
 pub extern "C" fn update_contract() {
     env::setup_panic_hook();
